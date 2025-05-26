@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dover/screens/siteDetail.dart';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
@@ -11,6 +13,7 @@ import '/models/nozzlesTable.dart';
 import '/models/pumpTable.dart';
 import '/models/tanksConfigTable.dart';
 import '/models/reviewCommentTable.dart';
+import '/services/api_service.dart';
 
 void main() {
   runApp(const SiteDetailApp());
@@ -156,49 +159,62 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             ),
           ),
           //Navigation buttons
-    Padding(
-  padding: const EdgeInsets.all(16.0),
-  child: Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      // Previous button (hidden on first step)
-      if (_currentStep > 0)
-        ElevatedButton(
-          onPressed: _goToPreviousStep,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blueGrey.shade700,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Previous button (hidden on first step)
+                if (_currentStep > 0)
+                  ElevatedButton(
+                    onPressed: _goToPreviousStep,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueGrey.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 14,
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 4,
+                    ),
+                    child: const Text('Previous'),
+                  )
+                else
+                  const SizedBox(width: 120), // Reserve space
+                // Next or Submit button
+                ElevatedButton(
+                  onPressed: _currentStep < 8 ? _goToNextStep : _submitForm,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        _currentStep < 8
+                            ? Colors.amber.shade600
+                            : Colors.green.shade600,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 14,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 4,
+                  ),
+                  child: Text(_currentStep < 8 ? 'Next' : 'Submit'),
+                ),
+              ],
             ),
-            elevation: 4,
           ),
-          child: const Text('Previous'),
-        )
-      else
-        const SizedBox(width: 120), // Reserve space
-
-      // Next or Submit button
-      ElevatedButton(
-        onPressed: _currentStep < 8 ? _goToNextStep : _submitForm,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _currentStep < 8 ? Colors.amber.shade600 : Colors.green.shade600,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          elevation: 4,
-        ),
-        child: Text(_currentStep < 8 ? 'Next' : 'Submit'),
-      ),
-    ],
-  ),
-)
-
         ],
       ),
     );
@@ -1613,7 +1629,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     try {
       bool isSaved = false;
       final db = await widget.sitedetaildatabase.dbHelper.database;
-
+      final apiService = ApiService();
       final now = DateTime.now().toIso8601String();
 
       await db.transaction((txn) async {
@@ -1825,29 +1841,263 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
         isSaved = true;
       });
 
-      if (isSaved && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Site configuration saved successfully!'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-
-        // Navigate back after saving
-        Navigator.of(context).pop(true);
-      }
-    } catch (e, stackTrace) {
-      debugPrint('Error saving site configuration: $e');
-      debugPrintStack(stackTrace: stackTrace);
-
-      if (mounted) {
+   
+    if (isSaved && mounted) {
+      // 2. Prepare data for API
+      final apiData = _prepareApiData();
+      
+      // 3. Try to send to API
+      try {
+        final response = await apiService.postSiteDetailsBatch(apiData);
+        
+        if (response.statusCode == 200) {
+          // Success - delete any pending sync for this site if it exists
+          await _cleanupPendingSyncs();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Site configuration saved to both local DB and API!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          // API returned error - save for later sync
+          await _saveForLaterSync(apiData);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Saved locally. Will sync with API later.'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      } catch (e) {
+        // Network error - save for later sync
+        await _saveForLaterSync(apiData);
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to save: ${e.toString()}'),
+            content: Text('Saved locally. Will sync when online: ${e.toString()}'),
             duration: const Duration(seconds: 3),
           ),
         );
       }
+
+      // 4. Check for and process any pending syncs
+      await _processPendingSyncs();
+
+      Navigator.of(context).pop(true);
     }
+  } catch (e, stackTrace) {
+    debugPrint('Error saving site configuration: $e');
+    debugPrintStack(stackTrace: stackTrace);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save: ${e.toString()}'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+}
+// Helper method to save failed API requests for later sync
+Future<void> _saveForLaterSync(Map<String, dynamic> apiData) async {
+  final db = await widget.sitedetaildatabase.dbHelper.database;
+  await db.insert('pending_syncs', {
+    'site_id': _siteDetail.id ?? 0,
+    'endpoint': 'sitedetailtable/batch',
+    'data': jsonEncode(apiData),
+    'created_at': DateTime.now().toIso8601String(),
+    'retry_count': 0,
+  });
+}
+
+// Helper method to clean up successful syncs
+Future<void> _cleanupPendingSyncs() async {
+  final db = await widget.sitedetaildatabase.dbHelper.database;
+  await db.delete(
+    'pending_syncs',
+    where: 'site_id = ?',
+    whereArgs: [_siteDetail.id ?? 0],
+  );
+}
+
+// Helper method to process any pending syncs
+Future<void> _processPendingSyncs() async {
+  final db = await widget.sitedetaildatabase.dbHelper.database;
+  final apiService = ApiService();
+  
+  // Get all pending syncs
+  final pendingSyncs = await db.query('pending_syncs');
+  
+  for (final sync in pendingSyncs) {
+    try {
+      final response = await apiService.postSiteDetailsBatch(
+        jsonDecode(sync['data'] as String),
+      );
+      
+      if (response.statusCode == 200) {
+        // Success - remove from pending
+        await db.delete(
+          'pending_syncs',
+          where: 'id = ?',
+          whereArgs: [sync['id']],
+        );
+      } else {
+        // Failed - increment retry count
+        await db.update(
+          'pending_syncs',
+          {'retry_count': (sync['retry_count'] as int) + 1},
+          where: 'id = ?',
+          whereArgs: [sync['id']],
+        );
+      }
+    } catch (e) {
+      debugPrint('Failed to process pending sync: $e');
+      // Don't throw, continue with next sync
+    }
+  }
+}
+
+  Map<String, dynamic> _prepareApiData() {
+    return {
+      "siteName": _siteDetail.siteName,
+      "siteId": _siteDetail.siteId,
+      "addressInfo": _siteDetail.addressInfo,
+      "countryInfo": _siteDetail.countryInfo,
+      "cityInfo": _siteDetail.cityInfo,
+      "towmInfo": _siteDetail.townInfo,
+      "geoloactionInfo": _siteDetail.geolocationInfo,
+      "mannedUnmanned": _siteDetail.mannedUnmanned,
+      "fuelSupplyTerminalName": _siteDetail.fuelSupplyTerminalName,
+      "brandOfFuelsSold": _siteDetail.brandOfFuelsSold,
+      "companyName": {"id": 6},
+      // Add user ID if you have it
+      "usersTable": {"id": 4}, // You'll need to replace with actual user ID
+      // Contacts
+      "contactsTableCollection":
+          _contacts
+              .map(
+                (contact) => {
+                  "contactName": contact.contactName,
+                  "roleTable": contact.role,
+                  "phoneNumber": contact.phoneNumber,
+                  "emailAddress": contact.email,
+                  "usersTable": {"id": 4}, // Replace with actual user ID
+                },
+              )
+              .toList(),
+
+      // Equipment
+      "siteEquipmentTableCollection": [
+        {
+          "fccModel": _equipmentInfo.fccModel,
+          "fccLocations": _equipmentInfo.fccLocations,
+          "atgModel": _equipmentInfo.atgModel,
+          "atgLocation": _equipmentInfo.atgLocation,
+          "printerRequired": _equipmentInfo.printerRequired == true ? "Y" : "N",
+          "usersTable": {"id": 4}, // Replace with actual user ID
+        },
+      ],
+
+      // Power Config
+      "powerConfigurationTableCollection": [
+        {
+          "groundingValue": _powerConfig.groundingValue,
+          "mainpowerFCCATG": _powerConfig.mainPowerFccAtg == true ? "Y" : "N",
+          "mainPowerFusionWirelessGateway":
+              _powerConfig.mainPowerFusionWirelessGateway == true ? "Y" : "N",
+          "upsForFccAtg": _powerConfig.upsForFccAtg == true ? "Y" : "N",
+          "upsDispenser": _powerConfig.upsDispenser == true ? "Y" : "N",
+          "mainPowerDispenserWirelessGateway":
+              _powerConfig.mainPowerFusionWirelessGateway == true ? "Y" : "N",
+          "separationOfDataCable":
+              _powerConfig.separationOfDataCable == true ? "Y" : "N",
+          "availablityDataPumpToFcc":
+              _powerConfig.availabilityDataPumpToFcc == true ? "Y" : "N",
+          "conduitCableInstall":
+              _powerConfig.conduitCableInstall == true ? "Y" : "N",
+          "usersTable": {"id": 4}, // Replace with actual user ID
+        },
+      ],
+
+      // Networking
+      "networkConfigTableCollection": [
+        {
+          "hasBroadband": _networkConfig.hasBroadband == true ? "Y" : "N",
+          "freePort": _networkConfig.freePort == true ? "Y" : "N",
+          "managedByThird": _networkConfig.managedByThird == true ? "Y" : "N",
+          "portAlocatedFccAtg":
+              _networkConfig.portAllocatedFccAtg == true ? "Y" : "N",
+          "teamviewerBlocked":
+              _networkConfig.teamviewerBlocked == true ? "Y" : "N",
+          "usersTable": {"id": 4}, // Replace with actual user ID
+        },
+      ],
+
+      // Tanks
+      "tanksConfigTableCollection":
+          _tanks
+              .map(
+                (tank) => {
+                  "tankNumber": tank.tankNumber,
+                  "gradesInfo": tank.gradesInfo,
+                  "capacity": tank.capacity?.toString(),
+                  "doubleWalled": tank.doubleWalled == true ? "Y" : "N",
+                  "pressureOrSuction": tank.pressureOrSuction,
+                  "siphonedInfo": tank.siphonedInfo == true ? "Y" : "N",
+                  "siphonedFromTankIds": tank.siphonedFromTankIds,
+                  "tankChartAvailable":
+                      tank.tankChartAvailable == true ? "Y" : "N",
+                  "dipStickAvailable":
+                      tank.dipStickAvailable == true ? "Y" : "N",
+                  "fuelAgeDays": tank.fuelAgeDays?.toString(),
+                  "diameterA": tank.diameterA,
+                  "manholeDepthB": tank.manholeDepthB,
+                  "probeLength": tank.probeLength,
+                  "manholeCoverMetal":
+                      tank.manholeCoverMetal == true ? "Y" : "N",
+                  "manholeWallMetal": tank.manholeWallMetal == true ? "Y" : "N",
+                  "remoteAntennaRequired":
+                      tank.remoteAntennaRequired == true ? "Y" : "N",
+                  "tankEntryDiameter": tank.tankEntryDiameter,
+                  "probeCableLengthToKiosk": tank.probeCableLengthToKiosk,
+                  "usersId": {"id": 4}, // Replace with actual user ID
+                },
+              )
+              .toList(),
+
+      // Pumps
+      "pumpTableCollection":
+          _pumps
+              .map(
+                (pump) => {
+                  "pumpNumber": pump.pumpNumber,
+                  "brandInfo": pump.brandInfo,
+                  "modelInfo": pump.modelInfo,
+                  "serialNumber": pump.serialNumber,
+                  "cpuFirmwaresInfo": pump.cpuFirmwaresInfo,
+                  "nozzlesInfo": pump.nozzlesInfo,
+                  "pumpAddressInfo": pump.pumpAddressInfo,
+                  "protocolInfo": pump.protocolInfo,
+                  "cableLengthToFcc": pump.cableLengthToFcc,
+                  "userTables": {"id": 4}, // Replace with actual user ID
+                },
+              )
+              .toList(),
+
+      // Notes/Comments
+      "reviewCommentTableCollection":
+          _notes
+              .map(
+                (note) => {
+                  "commentInfo": note.commentInfo,
+                  "userTable": {"id": 4}, // Replace with actual user ID
+                },
+              )
+              .toList(),
+    };
   }
 }

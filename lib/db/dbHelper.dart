@@ -208,10 +208,39 @@ class DatabaseHelper {
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
+      
+        // ✅ Add new pending_syncs table
+        await db.execute('''
+          CREATE TABLE pending_syncs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id INTEGER,
+            endpoint TEXT NOT NULL,
+            data TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            retry_count INTEGER DEFAULT 0
+          )
+        ''');
 
 
       print("✅ All tables created.");
     },
+     // ✅ This is important for upgrading existing apps
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          print("⚙️ Upgrading DB from version $oldVersion to $newVersion...");
+          await db.execute('''
+            CREATE TABLE pending_syncs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              site_id INTEGER,
+              endpoint TEXT NOT NULL,
+              data TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              retry_count INTEGER DEFAULT 0
+            )
+          ''');
+          print("✅ pending_syncs table added.");
+        }
+      },
     onOpen: (db) async {
       await db.execute("PRAGMA foreign_keys = ON");
       final tables = await db.rawQuery('SELECT name FROM sqlite_master WHERE type="table"');
