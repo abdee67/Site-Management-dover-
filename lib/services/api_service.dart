@@ -24,9 +24,14 @@ class ApiService {
 
         lastResponse = response;
         
-        if (response.statusCode == 200) {
-          return response;
-        }
+          if (response == 200 ) {
+    print('✅ Site detail submitted successfully!');
+    print(response.body);
+  } else {
+    print('❌ Failed to submit site detail');
+    print('Status: ${response.statusCode}');
+    print('Body: ${response.body}');
+  }
 
         // Exponential backoff
         if (i < maxRetries - 1) {

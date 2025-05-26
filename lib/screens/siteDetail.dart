@@ -278,6 +278,7 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                 Text('Company id: ${site['id']}'),
                                 Text('Company: ${site['company_name']}'),
                                 Text('SiteName: ${site['site_name']}'),
                                 Text('Site ID: ${site['site_id']}'),

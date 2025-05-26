@@ -24,7 +24,6 @@ Future<int> addCompany(String name, String country) async {
   return await db.insert(
     'address_table',
     {
-      
       'company_name': name,
       'country': country,
       'date_of_entry': DateTime.now().toIso8601String(),
@@ -142,16 +141,18 @@ Future<void> printFullSiteDetails(int siteId) async {
 
 Future<List<Map<String, dynamic>>> getAllNozzles() async {
   final db = await dbHelper.database;
-  return await db.query('address_table');
+  return await db.query('pending_syncs');
 }
 
 Future<void > printAllNozzles() async {
   final nozzles = await getAllNozzles();
   
-  debugPrint('\n🔧 ALL companies IN DATABASE (${nozzles.length} total)');
+  debugPrint('\n🔧 ALL not synced sites IN DATABASE (${nozzles.length} total)');
   for (final nozzle in nozzles) {
-    debugPrint('├─ Nozzle ID: ${nozzle['id']}');
-    debugPrint('│   company name: ${nozzle['company_name']}');
+    debugPrint('├─ endpoint : ${nozzle['endpoint']}');
+    debugPrint('│   data : ${nozzle['data']}');
+    debugPrint('│   site ID: ${nozzle['site_id']}');
+    debugPrint('│   Other data: ${nozzle.toString()}');
   }
   debugPrint('└──────────────────────────────────');
 }
