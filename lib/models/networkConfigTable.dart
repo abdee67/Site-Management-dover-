@@ -8,6 +8,7 @@ class NetworkConfig {
    bool? teamviewerBlocked;
    DateTime? dateEntry;
    DateTime? dateUpdated;
+   int? syncStatus = 0;
 
   NetworkConfig({
     this.id,
@@ -45,6 +46,7 @@ class NetworkConfig {
       'teamviewer_blocked': _boolToChar(teamviewerBlocked),
       'date_entry': dateEntry?.toIso8601String(),
       'date_updated': dateUpdated?.toIso8601String(),
+      'sync_status': syncStatus,
     };
     if (id != null) {
       map['id'] = id;

@@ -1,7 +1,12 @@
+// ignore_for_file: use_build_context_synchronously
+
+import 'dart:async';
 import 'dart:convert';
 
-import 'package:dover/screens/siteDetail.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:dover/providers/sync_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:sqflite/sqflite.dart';
 import '/db/siteDetailDatabase.dart';
 import '../models/siteDetailTable.dart';
@@ -14,6 +19,7 @@ import '/models/pumpTable.dart';
 import '/models/tanksConfigTable.dart';
 import '/models/reviewCommentTable.dart';
 import '/services/api_service.dart';
+import '/services/sync_service.dart';
 
 void main() {
   runApp(const SiteDetailApp());
@@ -79,6 +85,10 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
   late List<ReviewComment> _notes;
   int _currentStep = 0;
   final PageController _pageController = PageController();
+   final ApiService _apiService = ApiService();
+  bool _isSyncingAddresses = false;
+  late final SyncService _syncService;
+  bool _isTransitioning = false; // Add this flag
 
   // Form data models
   final Set<int> _visitedSteps = {0};
@@ -97,26 +107,117 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     _nozzles = widget.nozzles ?? [];
     _contacts = widget.contacts ?? [];
     _notes = widget.notes ?? [];
+    _syncService = SyncService(_apiService);
+  _initConnectivityListener();
     _loadCompanyNames();
     // ... other init code ...
   }
+    // Initialize connectivity listener
+  void _initConnectivityListener() {
+    Connectivity().onConnectivityChanged.listen((result) async {
+      if (result != ConnectivityResult.none) {
+        // When connectivity is restored, try to process pending syncs
+        final db = await widget.sitedetaildatabase.dbHelper.database;
+        await _syncService.processPendingSyncs(db);
+      }
+    });
+  }
+Future<void> _syncAddressData(Sitedetaildatabase db) async {
+  try {
+    // First check connectivity
+    final connectivityResult = await Connectivity().checkConnectivity();
+    final isOnline = connectivityResult != ConnectivityResult.none;
+    
+    if (!isOnline) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No internet connection. Cannot sync addresses.')),
+        );
+      }
+      return;
+    }
 
-  Future<void> _loadCompanyNames() async {
-    try {
-      final companies =
-          await widget.sitedetaildatabase.getCompaniesForDropdown();
+    setState(() => _isSyncingAddresses = true);
+    
+    final database = await db.dbHelper.database;
+    final credentials = await _apiService.getStoredCredentials();
+    
+    if (credentials == null) {
+      _showConnectivityError();
+      return;
+    }
+
+    final result = await _apiService.authenticateUser(
+      credentials['username']!,
+      credentials['password']!,
+    );
+    
+    if (result['success'] == true && result['addresses'] != null) {
+      final addresses = result['addresses'] as List<dynamic>;
+      
+      // Only update existing records, don't delete the table
+      for (var address in addresses) {
+        await database.insert(
+          'address_table',
+          {
+            'id': address['id'],
+            'company_name': address['companyName'],
+            'country': address['country'],
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      
+      // Reload company names after sync
+      await _loadCompanyNames();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Addresses updated successfully')),
+        );
+      }
+    }
+  } catch (e) {
+    debugPrint('Address sync error: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error syncing addresses: ${e.toString()}')),
+      );
+    }
+  } finally {
+    if (mounted) {
+      setState(() => _isSyncingAddresses = false);
+    }
+  }
+}
+void _showConnectivityError() {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text(
+      'First login requires internet connection. Please connect to the internet.'
+    )),
+  );
+}
+Future<void> _loadCompanyNames() async {
+  try {
+    final db = await widget.sitedetaildatabase.dbHelper.database;
+    final companies = await widget.sitedetaildatabase.getCompaniesForDropdown();
+    
+    if (mounted) {
       setState(() {
         _companyNames = companies;
         if (widget.existingSite?.companyId != null) {
           _selectedCompanyId = widget.existingSite?.companyId;
         }
       });
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error loading companies: $e')));
+    }
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading companies: $e')),
+      );
     }
   }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -124,6 +225,12 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
       appBar: AppBar(
         title: Text(_getStepTitles(_currentStep)),
         actions: [
+           IconButton(
+      icon: _isSyncingAddresses
+          ? const CircularProgressIndicator()
+          : const Icon(Icons.sync),
+      onPressed: _isSyncingAddresses ? null : () => _syncAddressData(widget.sitedetaildatabase),
+    ),
           if (_currentStep > 0)
             IconButton(
               icon: const Icon(Icons.arrow_back),
@@ -167,7 +274,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                 // Previous button (hidden on first step)
                 if (_currentStep > 0)
                   ElevatedButton(
-                    onPressed: _goToPreviousStep,
+                    onPressed:_isTransitioning ? null : _goToPreviousStep,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueGrey.shade700,
                       foregroundColor: Colors.white,
@@ -190,7 +297,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                   const SizedBox(width: 120), // Reserve space
                 // Next or Submit button
                 ElevatedButton(
-                  onPressed: _currentStep < 8 ? _goToNextStep : _submitForm,
+                  onPressed:_isTransitioning ? null : (_currentStep < 8 ? _goToNextStep : _submitForm),
                   style: ElevatedButton.styleFrom(
                     backgroundColor:
                         _currentStep < 8
@@ -235,29 +342,68 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     return titles[step];
   }
 
-  void _goToNextStep() {
-    _visitedSteps.add(_currentStep);
-    setState(() {
-      if (_currentStep < 8) {
-        _currentStep++;
-        _pageController.nextPage(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-      }
-    });
-  }
+void _goToNextStep() {
+  if (_isTransitioning) return; // Prevent multiple triggers
+  
+  _visitedSteps.add(_currentStep);
+  setState(() {
+    if (_currentStep < 8) {
+      _isTransitioning = true; // Start transition
+      _currentStep++;
+      
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      ).then((_) {
+        setState(() => _isTransitioning = false); // End transition
+      });
+    }
+  });
+}
 
-  void _goToPreviousStep() {
-    setState(() {
-      if (_currentStep > 0) {
-        _currentStep--;
-        _pageController.previousPage(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-        );
-      }
-    });
+void _goToPreviousStep() {
+  if (_isTransitioning) return; // Prevent multiple triggers
+  
+  setState(() {
+    if (_currentStep > 0) {
+      _isTransitioning = true; // Start transition
+      _currentStep--;
+      
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      ).then((_) {
+        setState(() => _isTransitioning = false); // End transition
+      });
+    }
+  });
+}
+
+    // Update the company dropdown to show sync status
+  Widget _buildCompanyDropdown() {
+    return Column(
+      children: [
+        if (_isSyncingAddresses)
+          const LinearProgressIndicator(),
+        DropdownButtonFormField<int>(
+          value: _selectedCompanyId,
+          decoration: const InputDecoration(labelText: 'Company Name'),
+          items: _companyNames.map((company) => DropdownMenuItem<int>(
+            value: company['id'],
+            child: Text(company['company_name']),
+          )).toList(),
+          onChanged: (value) {
+            setState(() {
+              _selectedCompanyId = value;
+              _siteDetail.companyId = value;
+              _siteDetail.companyName = _companyNames
+                  .firstWhere((c) => c['id'] == value)['company_name'];
+            });
+          },
+          validator: (value) => value == null ? 'Company must be selected' : null,
+        ),
+      ],
+    );
   }
 
   Widget _buildSiteDetailsStep() {
@@ -275,32 +421,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
               'Site Information',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            DropdownButtonFormField<int>(
-              value: _selectedCompanyId,
-              decoration: const InputDecoration(labelText: 'Company Name'),
-              items:
-                  _companyNames
-                      .map(
-                        (company) => DropdownMenuItem<int>(
-                          value: company['id'],
-                          child: Text(company['company_name']),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedCompanyId = value;
-                  _siteDetail.companyId = value;
-                  // Store the name for display purposes
-                  _siteDetail.companyName =
-                      _companyNames.firstWhere(
-                        (c) => c['id'] == value,
-                      )['company_name'];
-                });
-              },
-              validator:
-                  (value) => value == null ? 'Company must be selected' : null,
-            ),
+       _buildCompanyDropdown(),
             TextFormField(
               decoration: const InputDecoration(labelText: 'Site Name'),
               validator:
@@ -746,7 +867,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             decoration: const InputDecoration(labelText: 'Tank Number'),
             initialValue: tank.tankNumber?.toString(),
             keyboardType: TextInputType.number,
-            onChanged: (value) => tank.tankNumber = int.tryParse(value ?? ''),
+            onChanged: (value) => tank.tankNumber = int.tryParse(value),
           ),
           DropdownButtonFormField<String>(
             value: tank.gradesInfo,
@@ -766,7 +887,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             ),
             initialValue: tank.capacity?.toString(),
             keyboardType: TextInputType.number,
-            onChanged: (value) => tank.capacity = double.tryParse(value ?? ''),
+            onChanged: (value) => tank.capacity = double.tryParse(value),
           ),
           SwitchListTile(
             title: const Text('Double Walled'),
@@ -821,8 +942,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             decoration: const InputDecoration(labelText: 'Tank Age (Days)'),
             initialValue: tank.fuelAgeDays?.toString(),
             keyboardType: TextInputType.number,
-            onChanged:
-                (value) => tank.fuelAgeDays = double.tryParse(value ?? ''),
+            onChanged: (value) => tank.fuelAgeDays = double.tryParse(value),
           ),
           // Additional tank measurements
           TextFormField(
@@ -831,7 +951,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             ),
             initialValue: tank.diameterA?.toString(),
             keyboardType: TextInputType.number,
-            onChanged: (value) => tank.diameterA = double.tryParse(value ?? ''),
+            onChanged: (value) => tank.diameterA = double.tryParse(value),
           ),
           TextFormField(
             decoration: const InputDecoration(
@@ -839,15 +959,13 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             ),
             initialValue: tank.manholeDepthB?.toString(),
             keyboardType: TextInputType.number,
-            onChanged:
-                (value) => tank.manholeDepthB = double.tryParse(value ?? ''),
+            onChanged: (value) => tank.manholeDepthB = double.tryParse(value),
           ),
           TextFormField(
             decoration: const InputDecoration(labelText: 'Probe Length (m)'),
             initialValue: tank.probeLength?.toString(),
             keyboardType: TextInputType.number,
-            onChanged:
-                (value) => tank.probeLength = double.tryParse(value ?? ''),
+            onChanged: (value) => tank.probeLength = double.tryParse(value),
           ),
           SwitchListTile(
             title: const Text('Manhole Cover Metal'),
@@ -889,7 +1007,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             keyboardType: TextInputType.number,
             onChanged:
                 (value) =>
-                    tank.probeCableLengthToKiosk = double.tryParse(value ?? ''),
+                    tank.probeCableLengthToKiosk = double.tryParse(value),
           ),
           IconButton(
             icon: const Icon(Icons.delete),
@@ -939,7 +1057,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             decoration: const InputDecoration(labelText: 'Pump Number'),
             initialValue: pump.pumpNumber?.toString(),
             keyboardType: TextInputType.number,
-            onChanged: (value) => pump.pumpNumber = int.tryParse(value ?? ''),
+            onChanged: (value) => pump.pumpNumber = int.tryParse(value),
           ),
           DropdownButtonFormField<String>(
             value: pump.brandInfo,
@@ -1000,7 +1118,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             initialValue: pump.cableLengthToFcc?.toString(),
             keyboardType: TextInputType.number,
             onChanged:
-                (value) => pump.cableLengthToFcc = double.tryParse(value ?? ''),
+                (value) => pump.cableLengthToFcc = double.tryParse(value),
           ),
           IconButton(
             icon: const Icon(Icons.delete),
@@ -1102,10 +1220,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                     nozzle.pumpsSelection = value;
                     if (value != null) {
                       final pumpNumber = int.parse(value.split(' ')[1]);
-                      nozzle.pumpId =
-                          _pumps
-                              .firstWhere((p) => p.pumpNumber == pumpNumber)
-                              .id;
+                      nozzle.pumpId = pumpNumber;
                     }
                   });
                 },
@@ -1116,7 +1231,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                 initialValue: nozzle.nozzleNumbers?.toString(),
                 keyboardType: TextInputType.number,
                 onChanged:
-                    (value) => nozzle.nozzleNumbers = int.tryParse(value ?? ''),
+                    (value) => nozzle.nozzleNumbers = int.tryParse(value),
               ),
 
               DropdownButtonFormField<String>(
@@ -1151,10 +1266,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                     nozzle.tankSelection = value;
                     if (value != null) {
                       final tankNumber = int.parse(value.split(' ')[1]);
-                      nozzle.tankId =
-                          _tanks
-                              .firstWhere((t) => t.tankNumber == tankNumber)
-                              .id;
+                      nozzle.tankId = tankNumber;
                     }
                   });
                 },
@@ -1172,17 +1284,37 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
   }
 
   void _addNozzle() {
-    if (_pumps.isNotEmpty && _tanks.isNotEmpty) {
-      setState(() {
-        _nozzles.add(Nozzle());
-      });
-    } else {
+    if (_pumps.isEmpty || _tanks.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please add at least one pump and tank first.'),
         ),
       );
+      return;
     }
+
+    // Verify the selected pump and tank exist
+    final pumpExists = _pumps.any(
+      (p) => p.pumpNumber == _pumps.first.pumpNumber,
+    );
+    final tankExists = _tanks.any(
+      (t) => t.tankNumber == _tanks.first.tankNumber,
+    );
+
+    if (!pumpExists || !tankExists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected pump or tank does not exist.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _nozzles.add(
+        Nozzle()
+          ..pumpId = _pumps.first.pumpNumber
+          ..tankId = _tanks.first.tankNumber,
+      );
+    });
   }
 
   Widget _buildNotesStep() {
@@ -1607,7 +1739,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text(
-                          'Site configuration Submitted Successfully',
+                          'Site configuration Submitting...',
                         ),
                       ),
                     );
@@ -1623,28 +1755,76 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
       );
     }
   }
+  
 
   // Update the _saveData method to properly handle relationships
   Future<void> _saveData() async {
-    try {
-      bool isSaved = false;
-      final db = await widget.sitedetaildatabase.dbHelper.database;
+    // Initialize sync provider for UI feedback
+    final syncProvider = Provider.of<SyncProvider>(context, listen: false);
+    syncProvider.startSync('Preparing data...');
+
+
+ try {
+    // Get stored credentials
+    final credentials = await _apiService.getStoredCredentials();
+    String userId = credentials?['userId'] ?? 'offline-user';
+
+    // Check connectivity
+    syncProvider.updateProgress(0.1, 'Checking connectivity...');
+    final connectivityResult = await Connectivity().checkConnectivity();
+    final isOnline = connectivityResult != ConnectivityResult.none;
+
+    // If online and no userId, try to authenticate
+    if (isOnline && userId == 'offline-user') {
+      try {
+        syncProvider.updateProgress(0.2, 'Authenticating user...');
+        final authResult = await _apiService.authenticateUser(
+          credentials!['username']!,
+          credentials['password']!,
+        );
+        
+        if (authResult['success']) {
+          userId = authResult['userId'] ?? userId;
+        }
+      } catch (e) {
+        debugPrint('Authentication failed but proceeding offline: $e');
+      }
+    }
+
+    // Prepare API data with the user ID we have
+    final apiData = await _prepareApiData(userId);
+    
+    // Check for duplicates if online
+    if (isOnline && _siteDetail.siteId != null) {
+      syncProvider.updateProgress(0.3, 'Checking for duplicates...');
+      final exists = await ApiService().checkSiteExists(_siteDetail.siteId!);
+      if (exists && mounted) {
+        syncProvider.endSync();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This site already exists on server')),
+        );
+        return;
+      }
+    }
+
+      // 3. Save to local database
+      syncProvider.updateProgress(0.5, 'Saving to local database...');
+       final db = await widget.sitedetaildatabase.dbHelper.database;
       final apiService = ApiService();
       final now = DateTime.now().toIso8601String();
-
       await db.transaction((txn) async {
-        // 1. Save Site Detail
+        // Save Site Detail
         if (_siteDetail.id == null) {
           _siteDetail.dateEntry = DateTime.parse(now);
           _siteDetail.id = await txn.insert(
             'site_detail_table',
-            _siteDetail.toMap(),
+            _siteDetail.toMap()..['sync_status'] = 0,
           );
         } else {
           _siteDetail.dateUpdated = DateTime.parse(now);
           await txn.update(
             'site_detail_table',
-            _siteDetail.toMap(),
+            _siteDetail.toMap()..['sync_status'] = 0,
             where: 'id = ?',
             whereArgs: [_siteDetail.id],
           );
@@ -1664,7 +1844,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             contact.dateUpdated = DateTime.parse(now);
             await txn.update(
               'contacts_table',
-              contact.toMap(),
+              contact.toMap()..['sync_status'] = 0,
               where: 'id = ?',
               whereArgs: [contact.id],
             );
@@ -1683,7 +1863,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
           _equipmentInfo.dateUpdated = DateTime.parse(now);
           await txn.update(
             'site_equipment_table',
-            _equipmentInfo.toMap(),
+            _equipmentInfo.toMap()..['sync_status'] = 0,
             where: 'id = ?',
             whereArgs: [_equipmentInfo.id],
           );
@@ -1695,13 +1875,13 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
           _powerConfig.dateEntry = DateTime.parse(now);
           _powerConfig.id = await txn.insert(
             'power_configuration_table',
-            _powerConfig.toMap(),
+            _powerConfig.toMap()..['sync_status'] = 0,
           );
         } else {
           _powerConfig.dateUpdatedDate = DateTime.parse(now);
           await txn.update(
             'power_configuration_table',
-            _powerConfig.toMap(),
+            _powerConfig.toMap()..['sync_status'] = 0,
             where: 'id = ?',
             whereArgs: [_powerConfig.id],
           );
@@ -1713,13 +1893,13 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
           _networkConfig.dateEntry = DateTime.parse(now);
           _networkConfig.id = await txn.insert(
             'network_config_table',
-            _networkConfig.toMap(),
+            _networkConfig.toMap()..['sync_status'] = 0,
           );
         } else {
           _networkConfig.dateUpdated = DateTime.parse(now);
           await txn.update(
             'network_config_table',
-            _networkConfig.toMap(),
+            _networkConfig.toMap()..['sync_status'] = 0,
             where: 'id = ?',
             whereArgs: [_networkConfig.id],
           );
@@ -1736,7 +1916,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             tank.dateUpdated = DateTime.parse(now);
             await txn.update(
               'tanks_config_table',
-              tank.toMap(),
+              tank.toMap()..['sync_status'] = 0,
               where: 'id = ?',
               whereArgs: [tank.id],
             );
@@ -1755,7 +1935,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             pump.dateUpdated = DateTime.parse(now);
             await txn.update(
               'pump_table',
-              pump.toMap(),
+              pump.toMap()..['sync_status'] = 0,
               where: 'id = ?',
               whereArgs: [pump.id],
             );
@@ -1765,48 +1945,6 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
 
         // 8. Save Nozzles
         for (final nozzle in _nozzles) {
-          // Resolve Pump ID (using pumpNumber to ID mapping)
-          if (nozzle.pumpsSelection != null) {
-            final pumpNumber = int.tryParse(
-              nozzle.pumpsSelection!.split(' ')[1],
-            );
-            if (pumpNumber != null) {
-              final pump = savedPumps.firstWhere(
-                (p) => p.pumpNumber == pumpNumber,
-                orElse: () => Pump(),
-              );
-              if (pump.id != null) {
-                nozzle.pumpId = pump.id;
-              } else {
-                debugPrint(
-                  'Warning: Could not find pump with number $pumpNumber',
-                );
-                continue; // Skip this nozzle if pump not found
-              }
-            }
-          }
-
-          // Resolve Tank ID (using tankNumber to ID mapping)
-          if (nozzle.tankSelection != null) {
-            final tankNumber = int.tryParse(
-              nozzle.tankSelection!.split(' ')[1],
-            );
-            if (tankNumber != null) {
-              final tank = savedTanks.firstWhere(
-                (t) => t.tankNumber == tankNumber,
-                orElse: () => TankConfig(),
-              );
-              if (tank.id != null) {
-                nozzle.tankId = tank.id;
-              } else {
-                debugPrint(
-                  'Warning: Could not find tank with number $tankNumber',
-                );
-                continue; // Skip this nozzle if tank not found
-              }
-            }
-          }
-
           if (nozzle.id == null) {
             nozzle.dateEntry = DateTime.parse(now);
             nozzle.id = await txn.insert('nozzles_table', nozzle.toMap());
@@ -1814,7 +1952,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             nozzle.dateUpdate = DateTime.parse(now);
             await txn.update(
               'nozzles_table',
-              nozzle.toMap(),
+              nozzle.toMap()..['sync_status'] = 0,
               where: 'id = ?',
               whereArgs: [nozzle.id],
             );
@@ -1831,137 +1969,102 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             note.dateUpdated = DateTime.parse(now);
             await txn.update(
               'review_comment_table',
-              note.toMap(),
+              note.toMap()..['sync_status'] = 0,
               where: 'id = ?',
               whereArgs: [note.id],
             );
           }
         }
-
-        isSaved = true;
       });
 
-   
-    if (isSaved && mounted) {
-      // 2. Prepare data for API
-      final apiData = _prepareApiData();
-      
-      // 3. Try to send to API
+      // If online, attempt to sync
+    if (isOnline) {
       try {
-        final response = await apiService.postSiteDetailsBatch(apiData);
-        
+        syncProvider.updateProgress(0.9, 'Syncing with server...');
+        final response = await _apiService.postSiteDetailsBatch(apiData)
+            .timeout(const Duration(seconds: 30));
+            
         if (response.statusCode == 200) {
-          // Success - delete any pending sync for this site if it exists
-          await _cleanupPendingSyncs();
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Site configuration saved to both local DB and API!'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        } else {
-          // API returned error - save for later sync
-          await _saveForLaterSync(apiData);
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Saved locally. Will sync with API later.'),
-              duration: Duration(seconds: 3),
-            ),
-          );
+          await _markAsSynced(db);
+          await _syncService.processPendingSyncs(db);
+          syncProvider.endSync();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Successfully saved and synced!')),
+            );
+          }
+          return;
         }
       } catch (e) {
-        // Network error - save for later sync
-        await _saveForLaterSync(apiData);
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Saved locally. Will sync when online: ${e.toString()}'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+        debugPrint('Sync failed: $e');
       }
-
-      // 4. Check for and process any pending syncs
-      await _processPendingSyncs();
-
-      Navigator.of(context).pop(true);
     }
-  } catch (e, stackTrace) {
-    debugPrint('Error saving site configuration: $e');
-    debugPrintStack(stackTrace: stackTrace);
 
+    // Fallback to offline save if online sync failed or we're offline
+    await _saveForLaterSync(db, apiData);
+    syncProvider.endSync();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to save: ${e.toString()}'),
-          duration: const Duration(seconds: 3),
-        ),
+        const SnackBar(content: Text('Saved locally for later sync')),
+      );
+    }
+
+  } catch (e, stackTrace) {
+    debugPrint('Error saving data: $e');
+    debugPrintStack(stackTrace: stackTrace);
+    syncProvider.endSync();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving data: ${e.toString()}')),
       );
     }
   }
 }
-// Helper method to save failed API requests for later sync
-Future<void> _saveForLaterSync(Map<String, dynamic> apiData) async {
-  final db = await widget.sitedetaildatabase.dbHelper.database;
-  await db.insert('pending_syncs', {
-    'site_id': _siteDetail.id ?? 0,
-    'endpoint': 'sitedetailtable/batch',
-    'data': jsonEncode(apiData),
-    'created_at': DateTime.now().toIso8601String(),
-    'retry_count': 0,
-  });
-}
 
-// Helper method to clean up successful syncs
-Future<void> _cleanupPendingSyncs() async {
-  final db = await widget.sitedetaildatabase.dbHelper.database;
-  await db.delete(
-    'pending_syncs',
-    where: 'site_id = ?',
-    whereArgs: [_siteDetail.id ?? 0],
-  );
-}
 
-// Helper method to process any pending syncs
-Future<void> _processPendingSyncs() async {
-  final db = await widget.sitedetaildatabase.dbHelper.database;
-  final apiService = ApiService();
-  
-  // Get all pending syncs
-  final pendingSyncs = await db.query('pending_syncs');
-  
-  for (final sync in pendingSyncs) {
-    try {
-      final response = await apiService.postSiteDetailsBatch(
-        jsonDecode(sync['data'] as String),
+  Future<void> _markAsSynced(Database db) async {
+    await db.transaction((txn) async {
+      await txn.update(
+        'site_detail_table',
+        {'sync_status': 1},
+        where: 'id = ?',
+        whereArgs: [_siteDetail.id],
       );
-      
-      if (response.statusCode == 200) {
-        // Success - remove from pending
-        await db.delete(
-          'pending_syncs',
-          where: 'id = ?',
-          whereArgs: [sync['id']],
-        );
-      } else {
-        // Failed - increment retry count
-        await db.update(
-          'pending_syncs',
-          {'retry_count': (sync['retry_count'] as int) + 1},
-          where: 'id = ?',
-          whereArgs: [sync['id']],
-        );
-      }
-    } catch (e) {
-      debugPrint('Failed to process pending sync: $e');
-      // Don't throw, continue with next sync
+
+      // Mark all related tables as synced
+      //await _markRelatedAsSynced(txn);
+    });
+  }
+
+  Future<void> _saveForLaterSync(
+    Database db,
+    Map<String, dynamic> apiData,
+  ) async {
+    // First check if this sync is already pending
+    final existing = await db.query(
+      'pending_syncs',
+      where: 'site_id = ? AND endpoint = ?',
+      whereArgs: [_siteDetail.id, 'sitedetailtable/batch'],
+    );
+
+    if (existing.isEmpty) {
+      await db.insert('pending_syncs', {
+        'site_id': _siteDetail.id ?? 0,
+        'endpoint': 'sitedetailtable/batch',
+        'data': jsonEncode(apiData),
+        'created_at': DateTime.now().toIso8601String(),
+        'last_attempt': null,
+        'retry_count': 0,
+        'priority': 1,
+      });
     }
   }
-}
 
-  Map<String, dynamic> _prepareApiData() {
+  // Helper method to process any pending syncs
+
+  Future<Map<String, dynamic>> _prepareApiData(String userId) async {
+  // Get stored credentials
+ 
     return {
       "siteName": _siteDetail.siteName,
       "siteId": _siteDetail.siteId,
@@ -1973,9 +2076,9 @@ Future<void> _processPendingSyncs() async {
       "mannedUnmanned": _siteDetail.mannedUnmanned,
       "fuelSupplyTerminalName": _siteDetail.fuelSupplyTerminalName,
       "brandOfFuelsSold": _siteDetail.brandOfFuelsSold,
-      "companyName": {"id": 6},
+      "companyName": {"id": _selectedCompanyId},
       // Add user ID if you have it
-      "usersTable": {"id": 4}, // You'll need to replace with actual user ID
+      "usersTable": {"id": userId}, // You'll need to replace with actual user ID
       // Contacts
       "contactsTableCollection":
           _contacts
@@ -1985,7 +2088,7 @@ Future<void> _processPendingSyncs() async {
                   "roleTable": contact.role,
                   "phoneNumber": contact.phoneNumber,
                   "emailAddress": contact.email,
-                  "usersTable": {"id": 4}, // Replace with actual user ID
+                  "usersTable": {"id": userId}, // Replace with actual user ID
                 },
               )
               .toList(),
@@ -1998,7 +2101,7 @@ Future<void> _processPendingSyncs() async {
           "atgModel": _equipmentInfo.atgModel,
           "atgLocation": _equipmentInfo.atgLocation,
           "printerRequired": _equipmentInfo.printerRequired == true ? "Y" : "N",
-          "usersTable": {"id": 4}, // Replace with actual user ID
+          "usersTable": {"id": userId}, // Replace with actual user ID
         },
       ],
 
@@ -2019,7 +2122,7 @@ Future<void> _processPendingSyncs() async {
               _powerConfig.availabilityDataPumpToFcc == true ? "Y" : "N",
           "conduitCableInstall":
               _powerConfig.conduitCableInstall == true ? "Y" : "N",
-          "usersTable": {"id": 4}, // Replace with actual user ID
+          "usersTable": {"id": userId}, // Replace with actual user ID
         },
       ],
 
@@ -2033,60 +2136,89 @@ Future<void> _processPendingSyncs() async {
               _networkConfig.portAllocatedFccAtg == true ? "Y" : "N",
           "teamviewerBlocked":
               _networkConfig.teamviewerBlocked == true ? "Y" : "N",
-          "usersTable": {"id": 4}, // Replace with actual user ID
+          "usersTable": {"id": userId}, // Replace with actual user ID
         },
       ],
 
-      // Tanks
       "tanksConfigTableCollection":
-          _tanks
-              .map(
-                (tank) => {
-                  "tankNumber": tank.tankNumber,
-                  "gradesInfo": tank.gradesInfo,
-                  "capacity": tank.capacity?.toString(),
-                  "doubleWalled": tank.doubleWalled == true ? "Y" : "N",
-                  "pressureOrSuction": tank.pressureOrSuction,
-                  "siphonedInfo": tank.siphonedInfo == true ? "Y" : "N",
-                  "siphonedFromTankIds": tank.siphonedFromTankIds,
-                  "tankChartAvailable":
-                      tank.tankChartAvailable == true ? "Y" : "N",
-                  "dipStickAvailable":
-                      tank.dipStickAvailable == true ? "Y" : "N",
-                  "fuelAgeDays": tank.fuelAgeDays?.toString(),
-                  "diameterA": tank.diameterA,
-                  "manholeDepthB": tank.manholeDepthB,
-                  "probeLength": tank.probeLength,
-                  "manholeCoverMetal":
-                      tank.manholeCoverMetal == true ? "Y" : "N",
-                  "manholeWallMetal": tank.manholeWallMetal == true ? "Y" : "N",
-                  "remoteAntennaRequired":
-                      tank.remoteAntennaRequired == true ? "Y" : "N",
-                  "tankEntryDiameter": tank.tankEntryDiameter,
-                  "probeCableLengthToKiosk": tank.probeCableLengthToKiosk,
-                  "usersId": {"id": 4}, // Replace with actual user ID
-                },
-              )
-              .toList(),
+          _tanks.map((tank) {
+            // Filter nozzles related to this specific tank
+            final tankNozzles =
+                _nozzles
+                    .where((nozzle) => nozzle.tankId == tank.tankNumber)
+                    .toList();
 
-      // Pumps
+            return {
+              "tankNumber": tank.tankNumber,
+              "gradesInfo": tank.gradesInfo,
+              "capacity": tank.capacity?.toString(),
+              "doubleWalled": tank.doubleWalled == true ? "Y" : "N",
+              "pressureOrSuction": tank.pressureOrSuction,
+              "siphonedInfo": tank.siphonedInfo == true ? "Y" : "N",
+              "siphonedFromTankIds": tank.siphonedFromTankIds,
+              "tankChartAvailable": tank.tankChartAvailable == true ? "Y" : "N",
+              "dipStickAvailable": tank.dipStickAvailable == true ? "Y" : "N",
+              "fuelAgeDays": tank.fuelAgeDays?.toString(),
+              "diameterA": tank.diameterA,
+              "manholeDepthB": tank.manholeDepthB,
+              "probeLength": tank.probeLength,
+              "manholeCoverMetal": tank.manholeCoverMetal == true ? "Y" : "N",
+              "manholeWallMetal": tank.manholeWallMetal == true ? "Y" : "N",
+              "remoteAntennaRequired":
+                  tank.remoteAntennaRequired == true ? "Y" : "N",
+              "tankEntryDiameter": tank.tankEntryDiameter,
+              "probeCableLengthToKiosk": tank.probeCableLengthToKiosk,
+
+              // 🔁 Only add related nozzles here:
+              "nozzlesTableCollection":
+                  tankNozzles.map((nozzle) {
+                    return {
+                      "nozzelNumbers": nozzle.nozzleNumbers,
+                      "gradeInfo": nozzle.gradeInfo,
+                      "pumpId1": nozzle.pumpId,
+                      "tankId1": nozzle.tankId,
+                      "userTable": {"id": userId},
+                    };
+                  }).toList(),
+
+              "usersId": {"id": userId},
+            };
+          }).toList(),
+
       "pumpTableCollection":
-          _pumps
-              .map(
-                (pump) => {
-                  "pumpNumber": pump.pumpNumber,
-                  "brandInfo": pump.brandInfo,
-                  "modelInfo": pump.modelInfo,
-                  "serialNumber": pump.serialNumber,
-                  "cpuFirmwaresInfo": pump.cpuFirmwaresInfo,
-                  "nozzlesInfo": pump.nozzlesInfo,
-                  "pumpAddressInfo": pump.pumpAddressInfo,
-                  "protocolInfo": pump.protocolInfo,
-                  "cableLengthToFcc": pump.cableLengthToFcc,
-                  "userTables": {"id": 4}, // Replace with actual user ID
-                },
-              )
-              .toList(),
+          _pumps.map((pump) {
+            // Filter nozzles related to this specific pump
+            final pumpNozzles =
+                _nozzles
+                    .where((nozzle) => nozzle.pumpId == pump.pumpNumber)
+                    .toList();
+
+            return {
+              "pumpNumber": pump.pumpNumber,
+              "brandInfo": pump.brandInfo,
+              "modelInfo": pump.modelInfo,
+              "serialNumber": pump.serialNumber,
+              "cpuFirmwaresInfo": pump.cpuFirmwaresInfo,
+              "nozzlesInfo": pump.nozzlesInfo,
+              "pumpAddressInfo": pump.pumpAddressInfo,
+              "protocolInfo": pump.protocolInfo,
+              "cableLengthToFcc": pump.cableLengthToFcc,
+
+              // 🔁 Only include nozzles related to this pump
+              "nozzlesTableCollection":
+                  pumpNozzles.map((nozzle) {
+                    return {
+                      "nozzelNumbers": nozzle.nozzleNumbers,
+                      "gradeInfo": nozzle.gradeInfo,
+                      "pumpId1": nozzle.pumpId,
+                      "tankId1": nozzle.tankId,
+                      "userTable": {"id": userId},
+                    };
+                  }).toList(),
+
+              "userTables": {"id": userId},
+            };
+          }).toList(),
 
       // Notes/Comments
       "reviewCommentTableCollection":
@@ -2094,7 +2226,7 @@ Future<void> _processPendingSyncs() async {
               .map(
                 (note) => {
                   "commentInfo": note.commentInfo,
-                  "userTable": {"id": 4}, // Replace with actual user ID
+                  "userTable": {"id": userId}, // Replace with actual user ID
                 },
               )
               .toList(),

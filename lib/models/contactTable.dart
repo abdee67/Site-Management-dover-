@@ -7,6 +7,7 @@ class Contact {
    DateTime? dateEntry;
    DateTime? dateUpdated;
    String? email; // Foreign key
+   int? syncStatus = 0;
 
   Contact({
     this.id,
@@ -31,6 +32,7 @@ class Contact {
       'date_entry': dateEntry?.toIso8601String(),
       'date_updated': dateUpdated?.toIso8601String(),
       'email_address': email,
+      'sync_status': syncStatus,
     };
   }
     factory Contact.fromMap(Map<String, dynamic> map) {

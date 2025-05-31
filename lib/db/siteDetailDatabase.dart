@@ -1,4 +1,5 @@
 // lib/db/customer_database.dart
+
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/siteDetailTable.dart';
@@ -19,6 +20,7 @@ final DatabaseHelper dbHelper = DatabaseHelper.instance;
   static Sitedetaildatabase get instance => _instance;
 
 // In your Sitedetaildatabase class
+
 Future<int> addCompany(String name, String country) async {
   final db = await dbHelper.database;
   return await db.insert(
@@ -147,11 +149,10 @@ Future<List<Map<String, dynamic>>> getAllNozzles() async {
 Future<void > printAllNozzles() async {
   final nozzles = await getAllNozzles();
   
-  debugPrint('\n🔧 ALL not synced sites IN DATABASE (${nozzles.length} total)');
+  debugPrint('\n🔧 ALL pending IN DATABASE (${nozzles.length} total)');
   for (final nozzle in nozzles) {
-    debugPrint('├─ endpoint : ${nozzle['endpoint']}');
-    debugPrint('│   data : ${nozzle['data']}');
-    debugPrint('│   site ID: ${nozzle['site_id']}');
+    debugPrint('├─  id : ${nozzle['id']}');
+    debugPrint('│   site id : ${nozzle['site_id']}');
     debugPrint('│   Other data: ${nozzle.toString()}');
   }
   debugPrint('└──────────────────────────────────');
@@ -818,6 +819,69 @@ Future<void> saveCompleteSite({
       );
     }
   });
+}
+  Future<bool> authenticateLocalUser(String username, String password) async {
+    final db = await dbHelper.database;
+    final result = await db.query(
+      'user_table',
+      where: 'username = ? AND password = ?',
+      whereArgs: [username, password],
+    );
+    return result.isNotEmpty;
+  }
+
+Future<int> insertAddress(Map<String, dynamic> address) async {
+    final db = await dbHelper.database;
+    return await db.insert('addresses', address);
+  }
+
+  Future<List<Map<String, dynamic>>> getAddresses(int userId) async {
+    final db = await dbHelper.database;
+    return await db.query(
+      'addresses',
+      where: 'userId = ?',
+      whereArgs: [userId],
+    );
+  }
+
+// Add these methods to Sitedetaildatabase class
+Future<bool> checkUserExists(String username) async {
+  final db = await dbHelper.database;
+  final result = await db.query(
+    'user_table',
+    where: 'username = ?',
+    whereArgs: [username],
+  );
+  return result.isNotEmpty;
+}
+
+Future<bool> validateUser(String username, String password) async {
+  final db = await dbHelper.database;
+  final result = await db.query(
+    'user_table',
+    where: 'username = ? AND password = ?',
+    whereArgs: [username, password],
+  );
+  return result.isNotEmpty;
+}
+
+Future<int> insertUser(String username, String password, {String? userId}) async {
+  final db = await dbHelper.database;
+  return db.insert(
+    'user_table',
+    {'username': username, 'password': password, 'userId': userId},
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+}
+Future<Map<String, dynamic>?> getUser(String username) async {
+  final db = await dbHelper.database;
+  final results = await db.query(
+    'user_table',
+    where: 'username = ?',
+    whereArgs: [username],
+    limit: 1,
+  );
+  return results.isNotEmpty ? results.first : null;
 }
 
 }

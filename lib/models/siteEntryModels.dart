@@ -11,6 +11,7 @@ class SiteDetail {
   String? mannedUnmanned;
   String? fuelSupplyTerminalName;
   String? brandOfFuelsSold;
+  int? syncStatus = 0;
 }
 
 class EquipmentInfo {

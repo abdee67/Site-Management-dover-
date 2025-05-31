@@ -9,6 +9,7 @@ class Nozzle {
   String? tankSelection;  // For UI display
    DateTime? dateEntry;
    DateTime? dateUpdate;
+   int? syncStatus = 0;
 
   Nozzle({
     this.id,
@@ -43,6 +44,7 @@ class Nozzle {
       'tank_id': tankId,
       'date_entry': dateEntry?.toIso8601String(),
       'date_update': dateUpdate?.toIso8601String(),
+      'sync_status': syncStatus,
     };
     if (id != null) map['id'] = id;
     return map;

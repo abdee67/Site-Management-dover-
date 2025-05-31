@@ -28,6 +28,7 @@ class TankConfig {
    String? diameterAMeasurement;
    String? manholeDepthBMeasurement;
    String? probeCableLengthToKioskMeasurement;
+   int? syncStatus = 0;
 
   TankConfig({
     this.id,
@@ -123,6 +124,7 @@ class TankConfig {
       'diameter_a_measurement': diameterAMeasurement,
       'manhole_depth_b_measurement': manholeDepthBMeasurement,
       'probe_cable_length_to_kiosk_measurement': probeCableLengthToKioskMeasurement,
+      'sync_status': syncStatus,
     };
   }
 

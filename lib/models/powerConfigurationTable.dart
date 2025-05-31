@@ -13,6 +13,7 @@ class PowerConfiguration {
    bool? separationOfDataCable;
    bool? availabilityDataPumpToFcc;
    bool? conduitCableInstall;
+   int? syncStatus = 0;
 
   PowerConfiguration({
     this.id,
@@ -62,6 +63,7 @@ class PowerConfiguration {
       'separation_of_data_cable': boolToChar(separationOfDataCable),
       'availablity_data_pump_to_fcc': boolToChar(availabilityDataPumpToFcc),
       'conduit_cable_install': boolToChar(conduitCableInstall),
+      'sync_status': syncStatus,
     };
     if (id != null) map['id'] = id;
     return map;

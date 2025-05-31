@@ -17,6 +17,8 @@ class SiteDetail {
    DateTime? dateUpdated;
    int? companyId;
    String? companyName;
+   int? syncStatus = 0; // 0 = not synced, 1 = synced
+   DateTime? lastUpdated;
 
   SiteDetail({
     this.id,
@@ -36,6 +38,7 @@ class SiteDetail {
     this.dateUpdated,
     this.companyName,
     this.companyId,
+    this.syncStatus,
   });
 
   factory SiteDetail.fromMap(Map<String, dynamic> map) {
@@ -57,6 +60,7 @@ class SiteDetail {
       dateUpdated: parseDate(map['date_updated']),
       companyId: parseInt(map['company_name']),
       companyName: (map['company_name_text']?.toString()),
+      syncStatus: parseInt(map['sync_status']),
     );
   }
 
@@ -78,6 +82,8 @@ class SiteDetail {
       'date_entry': dateEntry?.toIso8601String(),
       'date_updated': dateUpdated?.toIso8601String(),
       'company_name': companyId,
+      'sync_status': syncStatus,
+      'last_updated': lastUpdated?.toIso8601String(),
     };
   }
 

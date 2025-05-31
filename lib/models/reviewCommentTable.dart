@@ -5,6 +5,7 @@ class ReviewComment {
    int? siteId;
    DateTime? dateEntry;
    DateTime? dateUpdated;
+   int? syncStatus = 0;
 
   ReviewComment({
     this.id,
@@ -31,6 +32,7 @@ class ReviewComment {
       'site_id': siteId,
       'date_entry': dateEntry?.toIso8601String(),
       'date_updated': dateUpdated?.toIso8601String(),
+      'sync_status': syncStatus,
     };
   }
 

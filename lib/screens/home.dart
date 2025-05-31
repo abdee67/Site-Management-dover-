@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
 
 class HomeScreen extends StatelessWidget{
-  const HomeScreen({super.key});
+  final String username;
+  const HomeScreen({required this.username,super.key});
 
-  void _navigateTo(BuildContext contextx, String screenName){
-    //Later: Navigate to stockScreen,salesScreen, companyScreen, etc.
-    ScaffoldMessenger.of(contextx).showSnackBar(
-      SnackBar(content: Text('Navigating to $screenName screen')),
-    );
-  }
+
     @override
 Widget build(BuildContext context) {
   return Scaffold(
@@ -42,18 +38,6 @@ Widget build(BuildContext context) {
         crossAxisSpacing: 20,
         mainAxisSpacing: 20,
         children: [
-          _buildDashboardButton(
-            icon: Icons.admin_panel_settings,
-            label: "Address Entry",
-            color: Colors.blue.shade700,
-            onPressed: () => Navigator.pushNamed(context, '/addressEntry'),
-          ),
-          _buildDashboardButton(
-            icon: Icons.admin_panel_settings,
-            label: "Company Entry",
-            color: Colors.blue.shade700,
-            onPressed: () => Navigator.pushNamed(context, '/companyEntry'),
-          ),
           _buildDashboardButton(
             icon: Icons.assignment_ind,
             label: "Site Entry",

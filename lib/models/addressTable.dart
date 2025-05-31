@@ -4,6 +4,7 @@ class Address {
   final String? country;
   final DateTime? dateOfEntry;
   final DateTime? updatedDate;
+  int? syncStatus = 0;
 
   Address({
     this.id,
@@ -29,6 +30,7 @@ class Address {
       'country': country,
       'date_of_entry': dateOfEntry?.toIso8601String(),
       'updated_date': updatedDate?.toIso8601String(),
+      'sync_status': syncStatus,
     };
     if (id != null) {
       map['id'] = id;

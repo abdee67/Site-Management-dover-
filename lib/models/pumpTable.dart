@@ -14,6 +14,7 @@ class Pump {
    String? cableLengthToFccMeasurement;
    DateTime? dateEntry;
    DateTime? dateUpdated;
+   int? syncStatus = 0;
 
   Pump({
     this.id,
@@ -67,6 +68,7 @@ class Pump {
       'cable_length_to_fcc_measurement': cableLengthToFccMeasurement,
       'date_entry': dateEntry?.toIso8601String(),
       'date_updated': dateUpdated?.toIso8601String(),
+      'sync_status': syncStatus,
     };
   }
 

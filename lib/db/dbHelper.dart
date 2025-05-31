@@ -5,7 +5,7 @@ import 'package:path/path.dart';
 
 class DatabaseHelper {
   static const _databaseName = "dover.db";
-  static const _databaseVersion = 2;
+  static const _databaseVersion = 1;
 
   
 
@@ -39,7 +39,8 @@ class DatabaseHelper {
           company_name TEXT,
           country TEXT,
           date_of_entry TEXT,
-          updated_date TEXT
+          updated_date TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0 
         )
       ''');
 
@@ -62,7 +63,9 @@ class DatabaseHelper {
           date_updated TEXT,
           status TEXT DEFAULT 'N',
           users TEXT DEFAULT NULL,
+          last_updated TEXT,
           company_name INTEGER,
+          sync_status INTEGER NOT NULL DEFAULT 0 ,
           FOREIGN KEY (company_name) REFERENCES address_table(id)
         )
       ''');
@@ -77,6 +80,7 @@ class DatabaseHelper {
           date_entry TEXT,
           date_updated TEXT,
           email_address TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
@@ -92,6 +96,7 @@ class DatabaseHelper {
           teamviewer_blocked TEXT,
           date_entry TEXT,
           date_updated TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
@@ -112,6 +117,7 @@ class DatabaseHelper {
           cable_length_to_fcc_measurement TEXT,
           date_entry TEXT,
           date_updated TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0 ,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
@@ -146,6 +152,7 @@ class DatabaseHelper {
           diameter_a_measurement TEXT,
           manhole_depth_b_measurement TEXT,
           probe_cable_length_to_kiosk_measurement TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
@@ -159,6 +166,7 @@ class DatabaseHelper {
           tank_id INTEGER,
           date_entry TEXT,
           date_update TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (pump_id) REFERENCES pump_table(id),
           FOREIGN KEY (tank_id) REFERENCES tanks_config_table(id)
         )
@@ -179,6 +187,7 @@ class DatabaseHelper {
           separation_of_data_cable TEXT,
           availablity_data_pump_to_fcc TEXT,
           conduit_cable_install TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
@@ -194,6 +203,7 @@ class DatabaseHelper {
           printer_required TEXT,
           date_updated TEXT,
           date_entry TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
         )
       ''');
@@ -205,7 +215,16 @@ class DatabaseHelper {
           site_id INTEGER,
           date_entry TEXT,
           date_updated TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
+        )
+      ''');
+       await db.execute('''
+        CREATE TABLE user_table (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          userId TEXT,
+          username TEXT UNIQUE,
+          password TEXT
         )
       ''');
       
@@ -217,7 +236,10 @@ class DatabaseHelper {
             endpoint TEXT NOT NULL,
             data TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            retry_count INTEGER DEFAULT 0
+            retry_count INTEGER DEFAULT 0,
+            priority INTEGER NOT NULL,
+            sync_status INTEGER NOT NULL DEFAULT 0,
+            last_attempt TEXT 
           )
         ''');
 
@@ -226,7 +248,7 @@ class DatabaseHelper {
     },
      // ✅ This is important for upgrading existing apps
       onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
+        if (oldVersion < 1) {
           print("⚙️ Upgrading DB from version $oldVersion to $newVersion...");
           await db.execute('''
             CREATE TABLE pending_syncs (
@@ -235,7 +257,11 @@ class DatabaseHelper {
               endpoint TEXT NOT NULL,
               data TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              retry_count INTEGER DEFAULT 0
+              retry_count INTEGER DEFAULT 0,
+              priority INTEGER NOT NULL,
+              sync_status INTEGER NOT NULL DEFAULT 0,
+              last_attempt TEXT NOT NULL
+              
             )
           ''');
           print("✅ pending_syncs table added.");

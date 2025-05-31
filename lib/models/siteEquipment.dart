@@ -10,6 +10,7 @@ class SiteEquipment {
   bool? printerRequired; // Use 'Y' or 'N' or null
   DateTime? dateUpdated;
   DateTime? dateEntry;
+  int? syncStatus = 0;
 
   SiteEquipment({
     this.id,
@@ -34,6 +35,7 @@ class SiteEquipment {
       'printer_required': printerRequired,
       'date_updated': dateUpdated?.toIso8601String(),
       'date_entry': dateEntry?.toIso8601String(),
+      'sync_status': syncStatus,
     };
 
     if (id != null) {
