@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:dover/db/siteDetailDatabase.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
-  static const String baseUrl = 'https://a70e-196-188-162-10.ngrok-free.app/dover/api';
+  static const String baseUrl = 'https://demo.techequations.com/dover/api';
   final Sitedetaildatabase db = Sitedetaildatabase.instance;
   
   static const Map<String, String> _headers = {
@@ -14,62 +15,110 @@ class ApiService {
   };
 
   // Authentication Method (returns userId and addresses)
-  Future<Map<String, dynamic>> authenticateUser(String username, String password) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'),
-        headers: _headers,
-        body: jsonEncode({
-          'username': username,
-          'password': password,
-        }),
-      ).timeout(const Duration(seconds: 600));
+Future<Map<String, dynamic>> authenticateUser(String username, String password) async {
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/login'),
+      headers: _headers,
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+      }),
+    ).timeout(const Duration(seconds: 10));
 
-      debugPrint('Login Response Code: ${response.statusCode}');
-      debugPrint('Login Response: ${response.body}');
+    debugPrint('Login Response Code: ${response.statusCode}');
+    debugPrint('Login Response: ${response.body}');
 
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        final message = jsonData['message'] as String?;
-        final userId = jsonData['userId'] as String?;
-        
-        
-        debugPrint('Message: $message, UserId: $userId');
-        
-        // Process addresses array
-        final List<dynamic> addresses = jsonData['addresses'] ?? [];
-        final parsedAddresses = <Map<String, dynamic>>[];
-        
-        for (final address in addresses) {
-          parsedAddresses.add({
-            'id': address['id'],
-            'companyName': address['companyName'],
-            'country': address['country'],
-          });
-          debugPrint('id: ${address['id']}, Company: ${address['companyName']}, Country: ${address['country']}');
-        }
-        // Store credentials securely for future logins
-        await _storeCredentials(username, password,userId);
-        
+    if (response.statusCode == 200) {
+      final jsonData = jsonDecode(response.body);
+      final message = jsonData['message'] as String? ?? 'Login successful';
+      final userId = jsonData['userId'] as String?;
+      
+      if (userId == null || userId.isEmpty) {
         return {
-          'success': true,
-          'userId': userId,
-          'addresses': parsedAddresses,
+          'success': false,
+          'error': 'Authentication succeeded but no user ID was provided',
+          'userMessage': 'System error: Please contact support'
         };
       }
+
+      // Process addresses array
+      final List<dynamic> addresses = jsonData['addresses'] ?? [];
+      final parsedAddresses = <Map<String, dynamic>>[];
+      
+      for (final address in addresses) {
+        parsedAddresses.add({
+          'id': address['id'],
+          'companyName': address['companyName'],
+          'country': address['country'],
+        });
+      }
+
+      // Store credentials securely for future logins
+      await _storeCredentials(username, password, userId);
       
       return {
-        'success': false,
-        'error': 'Login failed with status ${response.statusCode}'
-      };
-    } catch (e) {
-      debugPrint('API authentication failed: $e');
-      return {
-        'success': false,
-        'error': e.toString()
+        'success': true,
+        'userId': userId,
+        'addresses': parsedAddresses,
+        'userMessage': message,
       };
     }
+    
+    // Handle specific status codes with user-friendly messages
+    String userMessage;
+    switch (response.statusCode) {
+      case 400:
+        userMessage = 'Invalid request format';
+        break;
+      case 401:
+        userMessage = 'Incorrect username or password';
+        break;
+      case 403:
+        userMessage = 'Account disabled or access denied';
+        break;
+      case 404:
+        userMessage = 'Account not found';
+        break;
+      case 500:
+        userMessage = 'Server error - please try again later';
+        break;
+      default:
+        userMessage = 'Login failed (Error ${response.statusCode})';
+    }
+    
+    return {
+      'success': false,
+      'error': userMessage,
+      'userMessage': userMessage,
+    };
+  } on TimeoutException {
+    return {
+      'success': false,
+      'error': 'Connection timeout',
+      'userMessage': 'Server took too long to respond. Please check your connection and try again.',
+    };
+  } on SocketException {
+    return {
+      'success': false,
+      'error': 'Network error',
+      'userMessage': 'No internet connection. Please check your network settings.',
+    };
+  } on FormatException {
+    return {
+      'success': false,
+      'error': 'Invalid server response',
+      'userMessage': 'System error: Please contact support',
+    };
+  } catch (e) {
+    debugPrint('API authentication failed: $e');
+    return {
+      'success': false,
+      'error': e.toString(),
+      'userMessage': 'An unexpected error occurred. Please try again.',
+    };
   }
+}
     // Store credentials securely
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
