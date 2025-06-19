@@ -24,7 +24,7 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
   List<Map<String, dynamic>> _filteredSites = [];
   final TextEditingController _searchController = TextEditingController();
   bool _isLoading = true;
-  final bool _isSyncing = false;
+
 
   final ApiService _apiService = ApiService();
   late final SyncService syncService;
@@ -32,7 +32,9 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
   @override
   void initState() {
     super.initState();
-    syncService = SyncService(_apiService);
+    widget.sitedetaildatabase.dbHelper.database.then((db) {
+      syncService = SyncService(_apiService, db);
+    });
     _searchController.addListener(_filterSites);
     _loadSites();
   }
@@ -125,6 +127,7 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
     }
   }
 
+
   @override
   Widget build(BuildContext context) {
       return Scaffold(
@@ -178,16 +181,16 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
       PopupMenuButton<String>(
         icon: const Icon(Icons.more_vert),
         tooltip: 'More options',
-        onSelected: (value) {
+        onSelected: (value) async {
           if (value == 'logout') _logout();
-          if (value == 'settings') ();
+         
         },
         itemBuilder: (BuildContext context) => [
-         /**  const PopupMenuItem<String>(
-            value: 'settings',
+        /** *  PopupMenuItem<String>(
+            value: 'upload',
             child: ListTile(
-              leading: Icon(Icons.settings),
-              title: Text('Settings'),
+              leading: Icon(Icons.attach_file, color: Colors.blue),
+              title: Text('Upload PDF or Image'),
             ),
           ),**/
           const PopupMenuItem<String>(
@@ -334,8 +337,8 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
                 ],
               ),
             ),
-          ),
-        );
+            ),
+          );
       },
     );
   }
@@ -393,7 +396,6 @@ class _SiteDetailScreenState extends State<SiteDetailScreen> {
               _buildDetailRow(Icons.calendar_today, 'Created', _formatDate(site['date_entry'])),
               _buildDetailRow(Icons.update, 'Last Updated', _formatDate(site['date_update'])),
               const SizedBox(height: 20),
-             
             ],
           ),
         ),

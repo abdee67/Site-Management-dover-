@@ -21,11 +21,11 @@ void main() async {
 
   // After successful login
   // In your main.dart or wherever you initialize your database
-  await database.insertSampleCompanies();
   database.printFullSiteDetails;
   await database.printAllNozzles();
 
-  final syncService = SyncService(apiService);
+  final dbInstance = await database.dbHelper.database;
+  final syncService = SyncService(apiService, dbInstance);
   runApp( MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => SyncProvider()),
@@ -39,7 +39,7 @@ void main() async {
   );
     Timer.periodic(const Duration(seconds: 15), (timer) async {
     final db = await Sitedetaildatabase.instance.dbHelper.database;
-    final syncService = SyncService(ApiService());
+    final syncService = SyncService(ApiService(), db);
     await syncService.processPendingSyncs(db);
   });
 }

@@ -240,6 +240,24 @@ Future<Map<String, String>?> getStoredCredentials() async {
   }
   // Helper method to calculate exponential backoff delay
   static int _calculateDelay(int attempt) => 2 * (attempt + 1);
+
+  // Upload file (PDF/image) to API
+  Future<http.Response> uploadSiteFile({
+    required String fileName,
+    required String filePath,
+    required String fileType, // 'pdf' or 'image'
+  }) async {
+    final url = Uri.parse('$baseUrl/sitedetailtable/batch'); // Adjust endpoint as needed
+    var request = http.MultipartRequest('POST', url);
+
+    request.fields['filename'] = fileName;
+    request.fields['fileType'] = fileType;
+    final file = File(filePath);
+    final fileBytes = await file.readAsBytes();
+    request.files.add(http.MultipartFile.fromBytes('filePath', fileBytes, filename: fileName));
+    final streamedResponse = await request.send();
+    return await http.Response.fromStream(streamedResponse);
+  }
 }
 
 class ApiException implements Exception {

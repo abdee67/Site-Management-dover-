@@ -1,5 +1,6 @@
 // lib/db/customer_database.dart
 
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/siteDetailTable.dart';
@@ -11,6 +12,7 @@ import '/models/nozzlesTable.dart';
 import '/models/pumpTable.dart';
 import '/models/tanksConfigTable.dart';
 import '/models/reviewCommentTable.dart';
+import '/models/sitefile.dart';
 import 'dbHelper.dart';
 
 class Sitedetaildatabase {
@@ -68,41 +70,6 @@ Future<int> deleteCompany(int id) async {
   );
 }
 
-// Add this to your Sitedetaildatabase class
-Future<void> insertSampleCompanies() async {
-  final db = await dbHelper.database;
-
-    // Check if table is empty first
-  final count = Sqflite.firstIntValue(
-    await db.rawQuery('SELECT COUNT(*) FROM address_table')
-  ) ?? 0;
-
-  if (count > 0) return;
-
-  // List of sample companies to insert
-  const sampleCompanies = [
-    {'name': 'Shell', 'country': 'Nigeria'},
-    {'name': 'Total', 'country': 'France'},
-    {'name': 'ExxonMobil', 'country': 'USA'},
-    {'name': 'Chevron', 'country': 'USA'},
-    {'name': 'NNPC', 'country': 'Nigeria'},
-  ];
-
-  await db.transaction((txn) async {
-    for (var company in sampleCompanies) {
-      await txn.insert(
-        'address_table',
-        {
-          'company_name': company['name'],
-          'country': company['country'],
-          'date_of_entry': DateTime.now().toIso8601String(),
-          'updated_date': DateTime.now().toIso8601String(),
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-    }
-  });
-}
 Future<void> printFullSiteDetails(int siteId) async {
   final db = await dbHelper.database;
   
@@ -143,16 +110,15 @@ Future<void> printFullSiteDetails(int siteId) async {
 
 Future<List<Map<String, dynamic>>> getAllNozzles() async {
   final db = await dbHelper.database;
-  return await db.query('pending_syncs');
+  return await db.query('site_files');
 }
 
 Future<void > printAllNozzles() async {
   final nozzles = await getAllNozzles();
   
-  debugPrint('\n🔧 ALL pending IN DATABASE (${nozzles.length} total)');
+  debugPrint('\n🔧 ALL pendings IN DATABASE (${nozzles.length} total)');
   for (final nozzle in nozzles) {
     debugPrint('├─  id : ${nozzle['id']}');
-    debugPrint('│   site id : ${nozzle['site_id']}');
     debugPrint('│   Other data: ${nozzle.toString()}');
   }
   debugPrint('└──────────────────────────────────');
@@ -884,4 +850,41 @@ Future<Map<String, dynamic>?> getUser(String username) async {
   return results.isNotEmpty ? results.first : null;
 }
 
+// Save file upload request to pending_syncs for later sync
+Future<void> savePendingFileUpload({
+    required String siteId,
+    required String filePath,
+    required String fileType, // 'pdf' or 'image'
+  }) async {
+    final db = await dbHelper.database;
+    final data = {
+      'site_id': siteId,
+      'file_path': filePath,
+      'file_type': fileType,
+    };
+    await db.insert('pending_syncs', {
+      'site_id': siteId,
+      'endpoint': '/sitefile/upload',
+      'data': jsonEncode(data),
+      'created_at': DateTime.now().toIso8601String(),
+      'priority': 1,
+      'sync_status': 0,
+    });
+  }
+    // SiteFile CRUD
+  Future<int> insertSiteFile(SiteFile file) async {
+    final db = await dbHelper.database;
+    return await db.insert('site_files', file.toMap());
+  }
+
+  Future<List<SiteFile>> getFilesForSite(String siteId) async {
+    final db = await dbHelper.database;
+    final maps = await db.query('site_files', where: 'site_id = ?', whereArgs: [siteId]);
+    return maps.map((e) => SiteFile.fromMap(e)).toList();
+  }
+
+  Future<int> deleteSiteFile(int id) async {
+    final db = await dbHelper.database;
+    return await db.delete('site_files', where: 'id = ?', whereArgs: [id]);
+  }
 }

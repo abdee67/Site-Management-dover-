@@ -3,9 +3,9 @@ import '/utils/parsing_utils.dart';
 class SiteEquipment {
   int? id;
   int? siteId;
-  String? fccModel;
+  bool? fccModel;
   String? fccLocations;
-  String? atgModel;
+  bool? atgModel;
   String? atgLocation;
   bool? printerRequired; // Use 'Y' or 'N' or null
   DateTime? dateUpdated;
@@ -50,9 +50,9 @@ class SiteEquipment {
     return SiteEquipment(
       id: map['id'],
       siteId: map['site_id'],
-      fccModel: map['fcc_model'],
+      fccModel: parseBool(map['fcc_model']),
       fccLocations: map['fcc_locations'],
-      atgModel: map['atg_model'],
+      atgModel:parseBool( map['atg_model']),
       atgLocation: map['atg_location'],
       printerRequired: parseBool(map['printer_required']),
       dateEntry: map['date_entry'] != null ? DateTime.parse(map['date_entry']) : null,

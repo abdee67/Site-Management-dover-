@@ -227,7 +227,7 @@ class DatabaseHelper {
           password TEXT
         )
       ''');
-      
+  
         // ✅ Add new pending_syncs table
         await db.execute('''
           CREATE TABLE pending_syncs (
@@ -242,6 +242,19 @@ class DatabaseHelper {
             last_attempt TEXT 
           )
         ''');
+      await db.execute('''
+        CREATE TABLE site_files (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          site_id TEXT,
+          file_path TEXT,
+          file_name TEXT,
+          file_type TEXT,
+          sync_status INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT,
+          updated_at TEXT,
+          FOREIGN KEY (site_id) REFERENCES site_detail_table(id)
+        )
+      ''');
 
 
       print("✅ All tables created.");
@@ -257,6 +270,8 @@ class DatabaseHelper {
               endpoint TEXT NOT NULL,
               data TEXT NOT NULL,
               created_at TEXT NOT NULL,
+              file_path TEXT,
+              sync_type TEXT,
               retry_count INTEGER DEFAULT 0,
               priority INTEGER NOT NULL,
               sync_status INTEGER NOT NULL DEFAULT 0,
@@ -274,5 +289,6 @@ class DatabaseHelper {
     },
   );
 }
+
 
 }

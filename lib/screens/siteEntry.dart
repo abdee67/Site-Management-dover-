@@ -2,11 +2,16 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dover/providers/sync_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -20,8 +25,10 @@ import '/models/nozzlesTable.dart';
 import '/models/pumpTable.dart';
 import '/models/tanksConfigTable.dart';
 import '/models/reviewCommentTable.dart';
+import '/models/siteFile.dart';
 import '/services/api_service.dart';
 import '/services/sync_service.dart';
+
 
 void main() {
   runApp(const SiteDetailApp());
@@ -46,7 +53,7 @@ class SiteDetailApp extends StatelessWidget {
           filled: true,
           fillColor: Colors.grey.shade50,
         ),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           elevation: 2,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
@@ -71,6 +78,7 @@ class SiteDetailWizard extends StatefulWidget {
   final List<Nozzle>? nozzles;
   final List<Contact>? contacts;
   final List<ReviewComment>? notes;
+  final List<SiteFile>? files;
 
   const SiteDetailWizard({
     super.key,
@@ -85,6 +93,7 @@ class SiteDetailWizard extends StatefulWidget {
     this.powerConfig,
     this.pumps,
     this.tanks,
+    this.files,
   });
 
   @override
@@ -101,6 +110,8 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
   late List<Nozzle> _nozzles;
   late List<Contact> _contacts;
   late List<ReviewComment> _notes;
+  final List<PlatformFile> _uploadedFiles = [];
+  late List<SiteFile> _siteFiles;
   int _currentStep = 0;
   final PageController _pageController = PageController();
   final ApiService _apiService = ApiService();
@@ -113,6 +124,11 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
   final Set<int> _visitedSteps = {0};
   List<Map<String, dynamic>> _companyNames = [];
   int? _selectedCompanyId;
+  static const String baseUrl = 'https://demo.techequations.com/dover/api';
+    static const Map<String, String> _headers = {
+    'Content-Type': 'application/json',
+  };
+  
 
   @override
   void initState() {
@@ -128,7 +144,10 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     _nozzles = widget.nozzles ?? [];
     _contacts = widget.contacts ?? [];
     _notes = widget.notes ?? [];
-    _syncService = SyncService(_apiService);
+    (() async {
+      final db = await widget.sitedetaildatabase.dbHelper.database;
+      _syncService = SyncService(_apiService, db);
+    })();
     _initConnectivityListener();
     _loadCompanyNames();
     // ... other init code ...
@@ -243,7 +262,6 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
       }
     }
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -582,7 +600,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     }
   }
 
-  Widget _buildCompanyDropdown() {
+    Widget _buildCompanyDropdown() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1501,29 +1519,49 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             const SizedBox(height: 20),
 
             // FCC Section
-            _buildSectionHeader('FCC Equipment'),
-            TextFormField(
-              decoration: InputDecoration(
-                labelText: 'FCC Type and Model *',
-                prefixIcon: const Icon(Icons.memory, size: 20),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+          
+               Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: BorderSide(
+                  color:
+                      _equipmentInfo.fccModel ?? false
+                          ? Colors.green.shade600
+                          : Color(0xFF006064),
                 ),
-                focusedBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF006064), width: 2),
-                ),
-                filled: true,
-                fillColor: Colors.blueGrey[50],
               ),
-
-              onSaved: (value) => _equipmentInfo.fccModel = value,
-              onChanged: (value) => _equipmentInfo.fccModel = value,
-              initialValue: _equipmentInfo.fccModel,
+              child: SwitchListTile(
+                title: Text(
+                  'FCC Type and Model?',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color:
+                        _equipmentInfo.fccModel ?? false
+                            ? Colors.green.shade800
+                            : Color(0xFF006064),
+                  ),
+                ),
+                value: _equipmentInfo.fccModel ?? true,
+                onChanged:
+                    (value) =>
+                        setState(() => _equipmentInfo.fccModel = value),
+                secondary: Icon(
+                  Icons.print,
+                  color:
+                      _equipmentInfo.fccModel ?? false
+                          ? Colors.green.shade600
+                          : Colors.grey.shade600,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+              ),
             ),
             const SizedBox(height: 16),
+            if(_equipmentInfo.fccModel == false) ...[
             TextFormField(
               decoration: InputDecoration(
-                labelText: 'FCC Location *',
+                labelText: 'FCC Location',
                 prefixIcon: const Icon(Icons.location_on, size: 20),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -1539,32 +1577,52 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
               onChanged: (value) => _equipmentInfo.fccLocations = value,
               initialValue: _equipmentInfo.fccLocations,
             ),
+            ],
             const SizedBox(height: 20),
 
             // ATG Section
-            _buildSectionHeader('ATG Equipment'),
-            TextFormField(
-              decoration: InputDecoration(
-                labelText: 'ATG Type and Model *',
-                prefixIcon: const Icon(Icons.storage, size: 20),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+             Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: BorderSide(
+                  color:
+                      _equipmentInfo.atgModel ?? false
+                          ? Colors.green.shade600
+                          : Color(0xFF006064),
                 ),
-                focusedBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF006064), width: 2),
-                ),
-                filled: true,
-                fillColor: Colors.blueGrey[50],
               ),
-
-              onSaved: (value) => _equipmentInfo.atgModel = value,
-              onChanged: (value) => _equipmentInfo.atgModel = value,
-              initialValue: _equipmentInfo.atgModel,
+              child: SwitchListTile(
+                title: Text(
+                  'ATG Type and Model?',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color:
+                        _equipmentInfo.atgModel ?? false
+                            ? Colors.green.shade800
+                            : Color(0xFF006064),
+                  ),
+                ),
+                value: _equipmentInfo.atgModel ?? true,
+                onChanged:
+                    (value) =>
+                        setState(() => _equipmentInfo.atgModel = value),
+                secondary: Icon(
+                  Icons.print,
+                  color:
+                      _equipmentInfo.atgModel ?? false
+                          ? Colors.green.shade600
+                          : Colors.grey.shade600,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+              ),
             ),
             const SizedBox(height: 16),
+            if(_equipmentInfo.atgModel == false)...[
             TextFormField(
               decoration: InputDecoration(
-                labelText: 'ATG Location *',
+                labelText: 'ATG Location',
                 prefixIcon: const Icon(Icons.location_on, size: 20),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -1580,6 +1638,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
               onChanged: (value) => _equipmentInfo.atgLocation = value,
               initialValue: _equipmentInfo.atgLocation,
             ),
+            ],
             const SizedBox(height: 20),
 
             // Printer Section
@@ -1783,7 +1842,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
 
             _buildPowerChecklistItem(
               title:
-                  'Conduit/Cable gland for Dispenser Wireless Gateway communication cable',
+                  'Is there conduit/Cable gland to install communication cable from Dispenser Wireless Gateway to dispenser computer?',
               value: _powerConfig.conduitCableInstall ?? false,
               onChanged:
                   (value) =>
@@ -1864,7 +1923,6 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             const SizedBox(height: 24),
 
             // Main Connectivity Section
-            _buildNetworkSectionHeader('Broadband Connection'),
             _buildNetworkSwitchItem(
               title: 'Does the site have a broadband connection?',
               value: _networkConfig.hasBroadband ?? false,
@@ -1873,10 +1931,8 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                       setState(() => _networkConfig.hasBroadband = value),
               icon: Icons.network_wifi,
             ),
-            const SizedBox(height: 20),
-
+      
             // Network Details Section
-            _buildNetworkSectionHeader('Network Configuration'),
             _buildNetworkSwitchItem(
               title: 'Are there free network ports on the broadband router?',
               value: _networkConfig.freePort ?? false,
@@ -2132,6 +2188,135 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                     onChanged:
                         (value) => tank.capacity = double.tryParse(value),
                   ),
+                        const SizedBox(height: 12),
+                  _buildTankSwitchItem(
+                    title: 'Double Walled',
+                    value: tank.doubleWalled ?? false,
+                    onChanged:
+                        (value) => setState(() => tank.doubleWalled = value),
+                    icon: Icons.layers,
+                  ),
+                   const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: tank.pressureOrSuction,
+                    decoration: _buildInputDecoration(
+                      label: 'Pressure/Suction',
+                      icon: Icons.compress,
+                    ),
+                    items:
+                        ['Pressure', 'Suction']
+                            .map(
+                              (type) => DropdownMenuItem(
+                                value: type,
+                                child: Text(type),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        (value) =>
+                            setState(() => tank.pressureOrSuction = value),
+                  ),
+                  const SizedBox(height: 12),
+_buildTankSwitchItem(
+                    title: 'Siphoned',
+                    value: tank.siphonedInfo ?? false,
+                    onChanged: (value) {
+                      setState(() {
+                        tank.siphonedInfo = value;
+                        if (!value) tank.siphonedFromTankIds = null;
+                      });
+                    },
+                    icon: Icons.compare_arrows,
+                  ),
+                  if (tank.siphonedInfo ?? false) ...[
+                    const SizedBox(height: 8),
+                    _buildTankInputField(
+                      label: 'Siphoned From Tank IDs',
+                      value: tank.siphonedFromTankIds,
+                      icon: Icons.link,
+                      onChanged: (value) => tank.siphonedFromTankIds = value,
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                      _buildTankSwitchItem(
+                    title: 'Tank Chart Available',
+                    value: tank.tankChartAvailable ?? false,
+                    onChanged:
+                        (value) =>
+                            setState(() => tank.tankChartAvailable = value),
+                    icon: Icons.insert_chart,
+                  ),
+                  _buildTankSwitchItem(
+                    title: 'Dipstick Available',
+                    value: tank.dipStickAvailable ?? false,
+                    onChanged:
+                        (value) =>
+                            setState(() => tank.dipStickAvailable = value),
+                    icon: Icons.rule,
+                  ),
+                        const SizedBox(height: 12),
+                  _buildTankInputField(
+                    label: 'Tank Age (Days)',
+                    value: tank.fuelAgeDays?.toString(),
+                    icon: Icons.calendar_today,
+                    keyboardType: TextInputType.number,
+                    onChanged:
+                        (value) => tank.fuelAgeDays = double.tryParse(value),
+                  ),
+                      const SizedBox(height: 12),
+                  _buildTankInputField(
+                    label: 'Tank Diameter (A) (m)',
+                    value: tank.diameterA?.toString(),
+                    icon: Icons.straighten,
+                    keyboardType: TextInputType.number,
+                    onChanged:
+                        (value) => tank.diameterA = double.tryParse(value),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildTankInputField(
+                    label: 'Manhole Depth (B) (m)',
+                    value: tank.manholeDepthB?.toString(),
+                    icon: Icons.height,
+                    keyboardType: TextInputType.number,
+                    onChanged:
+                        (value) => tank.manholeDepthB = double.tryParse(value),
+                  ),
+                   const SizedBox(height: 12),
+                  _buildTankInputField(
+                    label: ' Confirm Probe Length (m)',
+                    value: tank.probeLength?.toString(),
+                    icon: Icons.straighten,
+                    keyboardType: TextInputType.number,
+                    onChanged:
+                        (value) => tank.probeLength = double.tryParse(value),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildTankSwitchItem(
+                    title: 'Is the Manhole Cover Metal?',
+                    value: tank.manholeCoverMetal ?? false,
+                    onChanged:
+                        (value) =>
+                            setState(() => tank.manholeCoverMetal = value),
+                    icon: Icons.construction,
+                  ),
+                  const SizedBox(height: 12),
+                    _buildTankSwitchItem(
+                    title: 'Has the Manhole Chamber Metal Walls?',
+                    value: tank.manholeWallMetal ?? false,
+                    onChanged:
+                        (value) =>
+                            setState(() => tank.manholeWallMetal = value),
+                    icon: Icons.construction,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildTankSwitchItem(
+                    title: 'Remote Antenna Required',
+                    value: tank.remoteAntennaRequired ?? false,
+                    onChanged:
+                        (value) =>
+                            setState(() => tank.remoteAntennaRequired = value),
+                    icon: Icons.settings_remote,
+                  ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<double>(
                     value: tank.tankEntryDiameter,
@@ -2164,144 +2349,11 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                               value,
                             ),
                   ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: tank.pressureOrSuction,
-                    decoration: _buildInputDecoration(
-                      label: 'Pressure/Suction',
-                      icon: Icons.compress,
-                    ),
-                    items:
-                        ['Pressure', 'Suction']
-                            .map(
-                              (type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type),
-                              ),
-                            )
-                            .toList(),
-                    onChanged:
-                        (value) =>
-                            setState(() => tank.pressureOrSuction = value),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildTankInputField(
-                    label: 'Tank Age (Days)',
-                    value: tank.fuelAgeDays?.toString(),
-                    icon: Icons.calendar_today,
-                    keyboardType: TextInputType.number,
-                    onChanged:
-                        (value) => tank.fuelAgeDays = double.tryParse(value),
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Tank Measurements',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildTankInputField(
-                    label: 'Tank Diameter (A) (m)',
-                    value: tank.diameterA?.toString(),
-                    icon: Icons.straighten,
-                    keyboardType: TextInputType.number,
-                    onChanged:
-                        (value) => tank.diameterA = double.tryParse(value),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildTankInputField(
-                    label: 'Manhole Depth (B) (m)',
-                    value: tank.manholeDepthB?.toString(),
-                    icon: Icons.height,
-                    keyboardType: TextInputType.number,
-                    onChanged:
-                        (value) => tank.manholeDepthB = double.tryParse(value),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildTankInputField(
-                    label: 'Probe Length (m)',
-                    value: tank.probeLength?.toString(),
-                    icon: Icons.straighten,
-                    keyboardType: TextInputType.number,
-                    onChanged:
-                        (value) => tank.probeLength = double.tryParse(value),
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Tank Features',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildTankSwitchItem(
-                    title: 'Double Walled',
-                    value: tank.doubleWalled ?? false,
-                    onChanged:
-                        (value) => setState(() => tank.doubleWalled = value),
-                    icon: Icons.layers,
-                  ),
-                  _buildTankSwitchItem(
-                    title: 'Siphoned',
-                    value: tank.siphonedInfo ?? false,
-                    onChanged: (value) {
-                      setState(() {
-                        tank.siphonedInfo = value;
-                        if (!value) tank.siphonedFromTankIds = null;
-                      });
-                    },
-                    icon: Icons.compare_arrows,
-                  ),
-                  if (tank.siphonedInfo ?? false) ...[
-                    const SizedBox(height: 8),
-                    _buildTankInputField(
-                      label: 'Siphoned From Tank IDs',
-                      value: tank.siphonedFromTankIds,
-                      icon: Icons.link,
-                      onChanged: (value) => tank.siphonedFromTankIds = value,
-                    ),
-                  ],
-                  _buildTankSwitchItem(
-                    title: 'Tank Chart Available',
-                    value: tank.tankChartAvailable ?? false,
-                    onChanged:
-                        (value) =>
-                            setState(() => tank.tankChartAvailable = value),
-                    icon: Icons.insert_chart,
-                  ),
-                  _buildTankSwitchItem(
-                    title: 'Dipstick Available',
-                    value: tank.dipStickAvailable ?? false,
-                    onChanged:
-                        (value) =>
-                            setState(() => tank.dipStickAvailable = value),
-                    icon: Icons.rule,
-                  ),
-                  _buildTankSwitchItem(
-                    title: 'Manhole Cover Metal',
-                    value: tank.manholeCoverMetal ?? false,
-                    onChanged:
-                        (value) =>
-                            setState(() => tank.manholeCoverMetal = value),
-                    icon: Icons.construction,
-                  ),
-                  _buildTankSwitchItem(
-                    title: 'Manhole Wall Metal',
-                    value: tank.manholeWallMetal ?? false,
-                    onChanged:
-                        (value) =>
-                            setState(() => tank.manholeWallMetal = value),
-                    icon: Icons.construction,
-                  ),
-                  _buildTankSwitchItem(
-                    title: 'Remote Antenna Required',
-                    value: tank.remoteAntennaRequired ?? false,
-                    onChanged:
-                        (value) =>
-                            setState(() => tank.remoteAntennaRequired = value),
-                    icon: Icons.settings_remote,
-                  ),
+                 
+            
+              
+              
+                
                 ],
               ),
             ),
@@ -2625,16 +2677,10 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                     icon: Icons.memory,
                     onChanged: (value) => pump.cpuFirmwaresInfo = value,
                   ),
+                
                   const SizedBox(height: 12),
                   _buildPumpInputField(
-                    label: 'Protocol',
-                    value: pump.protocolInfo,
-                    icon: Icons.settings_input_component,
-                    onChanged: (value) => pump.protocolInfo = value,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildPumpInputField(
-                    label: 'Nozzles Count',
+                    label: 'Nozzles',
                     value: pump.nozzlesInfo?.toString(),
                     icon: Icons.format_list_numbered,
                     keyboardType: TextInputType.number,
@@ -2647,9 +2693,16 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                     icon: Icons.numbers,
                     onChanged: (value) => pump.pumpAddressInfo = value,
                   ),
+                    const SizedBox(height: 12),
+                  _buildPumpInputField(
+                    label: 'Existing POS/ comm Protocol',
+                    value: pump.protocolInfo,
+                    icon: Icons.settings_input_component,
+                    onChanged: (value) => pump.protocolInfo = value,
+                  ),
                   const SizedBox(height: 12),
                   _buildPumpInputField(
-                    label: 'Cable Length to FCC (m)',
+                    label: 'Data Cable Length to FCC (m)',
                     value: pump.cableLengthToFcc?.toString(),
                     icon: Icons.cable,
                     keyboardType: TextInputType.number,
@@ -3179,18 +3232,105 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     });
   }
 
+
+
+  Future<void> _pickFiles() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+    );
+    if (result != null) {
+      setState(() {
+        _uploadedFiles.addAll(result.files);
+      });
+    }
+  }
+
+  Future<void> _pickImageFromCamera() async {
+    final pickedFile = await ImagePicker().pickImage(source: ImageSource.camera);
+    if (pickedFile != null) {
+      setState(() {
+        _uploadedFiles.add(PlatformFile(
+          name: pickedFile.name,
+          path: pickedFile.path,
+          size: File(pickedFile.path).lengthSync(),
+          bytes: null,
+        ));
+      });
+    }
+  }
   Widget _buildNotesStep() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Form(
-        autovalidateMode:
-            _visitedSteps.contains(7)
-                ? AutovalidateMode.onUserInteraction
-                : AutovalidateMode.disabled,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.attach_file, color: Colors.blue[800]),
+                      SizedBox(width: 8),
+                      Text('Upload Files', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Spacer(),
+                      IconButton(
+                        icon: Icon(Icons.camera_alt, color: Colors.green[700]),
+                        tooltip: 'Take Photo',
+                        onPressed: _pickImageFromCamera,
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.folder_open, color: Colors.blue[700]),
+                        tooltip: 'Pick Files',
+                        onPressed: _pickFiles,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  if (_uploadedFiles.isEmpty)
+                    Text('No files uploaded yet.', style: TextStyle(color: Colors.grey[600])),
+                  if (_uploadedFiles.isNotEmpty)
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      itemCount: _uploadedFiles.length,
+                      itemBuilder: (context, index) {
+                        final file = _uploadedFiles[index];
+                        final isImage = file.extension?.toLowerCase().contains('jpg') == true ||
+                            file.extension?.toLowerCase().contains('jpeg') == true ||
+                            file.extension?.toLowerCase().contains('png') == true;
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 6),
+                          child: ListTile(
+                            leading: isImage && file.path != null
+                                ? Image.file(File(file.path!), width: 48, height: 48, fit: BoxFit.cover)
+                                : Icon(file.extension == 'pdf' ? Icons.picture_as_pdf : Icons.insert_drive_file, color: Colors.red),
+                            title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            subtitle: Text('${(file.size / 1024).toStringAsFixed(1)} KB'),
+                            trailing: IconButton(
+                              icon: Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => _deleteFile(index),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Form(
+            autovalidateMode:
+                _visitedSteps.contains(7)
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
+            child: Card(
               elevation: 2,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -3264,8 +3404,8 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -3340,6 +3480,42 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
         ),
       );
     }).toList();
+  }
+
+  void _deleteFile(int index) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Delete File"),
+          content: const Text("Are you sure you want to delete this File?"),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _uploadedFiles.removeAt(index);
+                });
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("File deleted"),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: const Text("Delete", style: TextStyle(color: Colors.red)),
+            ),
+          ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        );
+      },
+    );
   }
 
   void _deleteNote(int index) {
@@ -3463,12 +3639,12 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
               title: 'Equipment',
               icon: Icons.build,
               children: [
-                _buildConfirmationItem('FCC Model', _equipmentInfo.fccModel),
+                _buildConfirmationItem('FCC Model', _equipmentInfo.fccModel == true ? 'Yes' : 'No'),
                 _buildConfirmationItem(
                   'FCC Location',
                   _equipmentInfo.fccLocations,
                 ),
-                _buildConfirmationItem('ATG Model', _equipmentInfo.atgModel),
+                _buildConfirmationItem('ATG Model', _equipmentInfo.atgModel == true ? 'Yes' : 'No'),
                 _buildConfirmationItem(
                   'ATG Location',
                   _equipmentInfo.atgLocation,
@@ -3641,7 +3817,23 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                       )
                       .toList(),
             ),
-
+       _buildConfirmationSection(
+              title: 'Files (${_uploadedFiles.length})',
+              icon: Icons.file_upload_outlined,
+              children:
+                  _uploadedFiles
+                      .map(
+                        (file) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildConfirmationItem('Fle Name', file.name),
+                             _buildConfirmationItem('File type', file.path?.split('.').last ?? 'Unknown'),
+                            const Divider(),
+                          ],
+                        ),
+                      )
+                      .toList(),
+            ),
             // Notes
             _buildConfirmationSection(
               title: 'Notes (${_notes.length})',
@@ -3747,9 +3939,6 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
   if (_siteDetail.siteName == null || _siteDetail.siteName!.isEmpty) {
     allValid = false;
   }
-  if (_equipmentInfo.fccModel == null || _equipmentInfo.fccModel!.isEmpty) {
-    allValid = false;
-  }
 
   if (allValid) {
     showDialog(
@@ -3812,6 +4001,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     );
   }
 }
+
 
   // Update the _saveData method to properly handle relationships
   Future<void> _saveData() async {
@@ -4030,7 +4220,22 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
             );
           }
         }
-      });
+
+             // 10. Save Files
+        for (final file in _uploadedFiles) {
+          final siteFile = SiteFile(
+            siteId: _siteDetail.id,
+            filePath: file.path,
+            fileName: file.name,
+            fileType: file.path?.split('.').last.toLowerCase(),
+            createdAt: DateTime.parse(now),
+            syncStatus: 0, // Not synced yet
+          );
+          // PlatformFile does not have an 'id', so always insert a new SiteFile record
+          await txn.insert('site_files', siteFile.toMap());
+        }
+});
+   
 
       // If online, attempt to sync
       // If you have internet
@@ -4040,10 +4245,15 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
           final response = await _apiService
               .postSiteDetailsBatch(apiData)
               .timeout(const Duration(seconds: 30));
+          debugPrint('API Response Status: \\${response.statusCode}');
+          debugPrint('API Response Body: \\${response.body}');
 
           if (response.statusCode == 200) {
             await _markAsSynced(db);
+            await _syncFiles(db, _siteDetail.id!);
             await _syncService.processPendingSyncs(db);
+            // Upload each file associated with this site
+            
             syncProvider.endSync();
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -4052,9 +4262,13 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
               Navigator.of(context).pop(true);
             }
             return;
+          } else {
+            debugPrint('❌ API returned error status: \\${response.statusCode}');
+            debugPrint('❌ API error body: \\${response.body}');
           }
-        } catch (e) {
-          debugPrint('Sync failed: $e');
+        } catch (e, stackTrace) {
+          debugPrint('Sync failed: \\${e.toString()}');
+          debugPrintStack(stackTrace: stackTrace);
         }
       }
 
@@ -4066,7 +4280,9 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
           const SnackBar(
             content: Text('📱 Saved on your device (will send to cloud later)'),
           ),
+          
         );
+        Navigator.of(context).pop(true);
       }
     } catch (e, stackTrace) {
       debugPrint('Error saving data: $e');
@@ -4100,6 +4316,8 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     Database db,
     Map<String, dynamic> apiData,
   ) async {
+      // Remove files from the sync data
+  final syncData = Map<String, dynamic>.from(apiData)..remove('attachmentCollection');
     // First check if this sync is already pending
     final existing = await db.query(
       'pending_syncs',
@@ -4111,7 +4329,7 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
       await db.insert('pending_syncs', {
         'site_id': _siteDetail.id ?? 0,
         'endpoint': 'sitedetailtable/batch',
-        'data': jsonEncode(apiData),
+        'data': jsonEncode(syncData),
         'created_at': DateTime.now().toIso8601String(),
         'last_attempt': null,
         'retry_count': 0,
@@ -4120,12 +4338,37 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
     }
   }
 
+Future<void> saveFilesForLaterUpload(List<File> files, int siteId) async {
+  final db = await widget.sitedetaildatabase.dbHelper.database;
+  final appDir = await getApplicationDocumentsDirectory();
+  final uploadsDir = Directory('${appDir.path}/uploads/site_$siteId');
+  
+  if (!await uploadsDir.exists()) {
+    await uploadsDir.create(recursive: true);
+  }
+
+  await db.transaction((txn) async {
+    for (final file in files) {
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last}';
+      final savedFile = await file.copy('${uploadsDir.path}/$fileName');
+      
+      await txn.insert('pending_file_uploads', {
+        'site_id': siteId,
+        'file_path': savedFile.path,
+        'file_name': file.path.split('/').last,
+        'file_type': file.path.split('.').last.toLowerCase(),
+        'created_at': DateTime.now().toIso8601String(),
+        'sync_status': 0,
+      });
+    }
+  });
+}
+
   // Helper method to process any pending syncs
 
   Future<Map<String, dynamic>> _prepareApiData(String userId) async {
     // Get stored credentials
-
-    return {
+final data = {
       "siteName": _siteDetail.siteName,
       "siteId": _siteDetail.siteId,
       "addressInfo": _siteDetail.addressInfo,
@@ -4158,9 +4401,9 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
       // Equipment
       "siteEquipmentTableCollection": [
         {
-          "fccModel": _equipmentInfo.fccModel,
+          "fccModel": _equipmentInfo.fccModel == true ? "Y" : "N",
           "fccLocations": _equipmentInfo.fccLocations,
-          "atgModel": _equipmentInfo.atgModel,
+          "atgModel": _equipmentInfo.atgModel == true ? "Y" : "N",
           "atgLocation": _equipmentInfo.atgLocation,
           "printerRequired": _equipmentInfo.printerRequired == true ? "Y" : "N",
           "usersTable": {"id": userId}, // Replace with actual user ID
@@ -4292,6 +4535,75 @@ class _SiteDetailWizardState extends State<SiteDetailWizard> {
                 },
               )
               .toList(),
+      // Files
+"attachmentCollection": await prepareAttachments(),
     };
+    return data;
   }
+  Future<List<Map<String, dynamic>>> prepareAttachments() async {
+  final attachments = <Map<String, dynamic>>[];
+  
+  for (final file in _uploadedFiles) {
+    if (file.path == null) continue;
+    
+    try {
+      final fileObj = File(file.path!);
+      final fileSize = await fileObj.length();
+      
+      // Skip files over 10MB
+      if (fileSize > 10 * 1024 * 1024) {
+        debugPrint('Skipping large file: ${file.name} (${fileSize ~/ 1024}KB)');
+        continue;
+      }
+
+      final fileBytes = await fileObj.readAsBytes();
+      attachments.add({
+        "filename": file.name,
+        "filePath": base64Encode(fileBytes),
+        "fileType": file.extension?.toLowerCase() ?? 
+                   file.name.split('.').last.toLowerCase(),
+      });
+    } catch (e) {
+      debugPrint('Error processing file ${file.name}: $e');
+    }
+  }
+  
+  return attachments;
+}
+  Future<void> _syncFiles(Database db, int siteId) async {
+  final files = await db.query(
+    'site_files',
+    where: 'site_id = ? AND sync_status = 0',
+    whereArgs: [siteId],
+  );
+
+  for (final file in files) {
+    try {
+      final fileData = await File(file['file_path'] as String).readAsBytes();
+      final response = await http.post(
+        Uri.parse('https://demo.techequations.com/dover/api/sitedetailtable/batch'),
+        headers: _headers,
+        body: jsonEncode({
+          'filename': file['file_name'],
+          'fileType': file['file_type'],
+          'filePath': base64Encode(fileData),
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        await db.update(
+          'site_files',
+          {'sync_status': 1},
+          where: 'id = ?',
+          whereArgs: [file['id']],
+        );
+        // Optionally delete the file after successful upload
+        await File(file['file_path'] as String).delete();
+      }
+    } catch (e) {
+      debugPrint('Failed to upload file ${file['id']}: $e');
+      // Consider implementing retry logic here
+    }
+  }
+}
 }
