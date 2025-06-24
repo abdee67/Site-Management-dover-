@@ -5,7 +5,6 @@ import 'dart:io';
 import 'dart:math';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import 'api_service.dart';
 

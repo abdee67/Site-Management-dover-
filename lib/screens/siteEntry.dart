@@ -3247,19 +3247,22 @@ _buildTankSwitchItem(
     }
   }
 
-  Future<void> _pickImageFromCamera() async {
-    final pickedFile = await ImagePicker().pickImage(source: ImageSource.camera);
-    if (pickedFile != null) {
-      setState(() {
-        _uploadedFiles.add(PlatformFile(
-          name: pickedFile.name,
-          path: pickedFile.path,
-          size: File(pickedFile.path).lengthSync(),
-          bytes: null,
-        ));
-      });
-    }
+ Future<void> _pickImageFromCamera() async {
+  final pickedFile = await ImagePicker().pickImage(source: ImageSource.camera);
+ if (pickedFile != null && _siteDetail.siteId != null) {
+    final extension = pickedFile.path.split('.').last.toLowerCase();
+    final conciseName = '${_siteDetail.siteId}_${_siteDetail.siteName}.$extension';
+
+    setState(() {
+      _uploadedFiles.add(PlatformFile(
+        name: conciseName, // Use generated name instead of original
+        path: pickedFile.path,
+        size: File(pickedFile.path).lengthSync(),
+        bytes: null,
+      ));
+    });
   }
+}
   Widget _buildNotesStep() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
